@@ -9,7 +9,7 @@
 ## Step 1. Python 가상환경 생성 및 패키지 설치
 
 ```bash
-cd /Users/mori/GIT/forMori/etl-ai-pipeline
+cd /Users/mori/GIT/forMori/project-mori/util-sheetprocessing
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -36,10 +36,10 @@ gcloud auth login
 #### 2-2. 프로젝트 생성 + 기본 프로젝트 설정
 
 ```bash
-# 프로젝트 생성 (프로젝트 ID는 전 세계 유일해야 함)
-gcloud projects create etl-ai-pipeline-$(date +%s) --name="etl-ai-pipeline"
-
-# 출력된 실제 프로젝트 ID로 기본 프로젝트 설정
+# 프로젝트 생성 (프로젝트 ID는 전 세계 유일해야 함, unix timestamp as sec)
+gcloud projects create util-sheetprocessing --name="util-sheetprocessing"
+# RESULT: Enabling service [cloudapis.googleapis.com] on project [util-sheetprocessing]...
+# 출력된 실제 프로젝트 ID로 기본 프로젝트 설정(ID: util-sheetprocessing)
 gcloud config set project <PROJECT_ID>
 ```
 
@@ -52,17 +52,16 @@ gcloud services enable sheets.googleapis.com drive.googleapis.com
 #### 2-4. 서비스 계정 생성
 
 ```bash
-gcloud iam service-accounts create sheet-bot \
-  --display-name="Sheet Bot for ETL Pipeline"
+gcloud iam service-accounts create sheet-bot --display-name="Sheet Bot for sheet processing"
 ```
 
 #### 2-5. JSON 키 파일 생성
 
 ```bash
-mkdir -p /Users/mori/GIT/forMori/etl-ai-pipeline/credentials
+mkdir -p /Users/mori/GIT/forMori/project-mori/util-sheetprocessing/credentials
 
 gcloud iam service-accounts keys create \
-  /Users/mori/GIT/forMori/etl-ai-pipeline/credentials/service_account.json \
+  /Users/mori/GIT/forMori/project-mori/util-sheetprocessing/credentials/service_account.json \
   --iam-account=sheet-bot@$(gcloud config get-value project).iam.gserviceaccount.com
 ```
 
@@ -100,9 +99,9 @@ gcloud iam service-accounts list --format="value(email)" --filter="displayName:S
 - 다운로드된 파일을 프로젝트 폴더로 이동:
 
 ```bash
-mkdir -p /Users/mori/GIT/forMori/etl-ai-pipeline/credentials
-mv ~/Downloads/etl-ai-pipeline-*.json \
-   /Users/mori/GIT/forMori/etl-ai-pipeline/credentials/service_account.json
+mkdir -p /Users/mori/GIT/forMori/project-mori/util-sheetprocessing/credentials
+mv ~/Downloads/*.json \
+   /Users/mori/GIT/forMori/project-mori/util-sheetprocessing/credentials/service_account.json
 ```
 
 ---
@@ -112,7 +111,7 @@ mv ~/Downloads/etl-ai-pipeline-*.json \
 > 이 단계는 CLI로 대체할 수 없다. 브라우저에서 수행.
 
 1. JSON 파일 내 `"client_email"` 필드에서 이메일 확인
-   - 형식: `sheet-bot@<PROJECT_ID>.iam.gserviceaccount.com`
+  - 형식: `sheet-bot@<PROJECT_ID>.iam.gserviceaccount.com`
 2. 파이프라인에서 읽을 구글 시트를 브라우저에서 열기
 3. 우측 상단 **공유** → 서비스 계정 이메일 입력 → **편집자** → 보내기
 
@@ -151,7 +150,7 @@ API_DELAY_SECONDS=1.0
 ## Step 6. 실행
 
 ```bash
-cd /Users/mori/GIT/forMori/etl-ai-pipeline
+cd /Users/mori/GIT/forMori/project-mori/util-sheetprocessing
 source .venv/bin/activate
 python pipeline.py
 ```
@@ -160,21 +159,27 @@ python pipeline.py
 
 ## 체크리스트
 
-| # | 작업 | 소요 시간 | 비용 |
-|---|------|-----------|------|
-| 1 | venv + pip install | 2분 | 무료 |
-| 2 | GCP 서비스 계정 + JSON 키 | 5분 | 무료 |
-| 3 | 구글 시트에 서비스 계정 이메일 공유 | 1분 | 무료 |
-| 4 | Gemini API 키 발급 | 2분 | 무료 (무료 티어) |
-| 5 | .env 작성 | 1분 | - |
-| 6 | `python pipeline.py` 실행 | 데이터량 비례 | Gemini 토큰 비용 |
+> 완료 시 `[ ]` → `[x]` 로 변경
+
+- [x] Step 1 — venv + pip install
+- [x] Step 2-1 — gcloud auth login
+- [x] Step 2-2 — 프로젝트 생성 (`util-sheetprocessing`)
+- [x] Step 2-3 — API 활성화 (Sheets, Drive)
+- [x] Step 2-4 — 서비스 계정 생성
+- [x] Step 2-5 — JSON 키 파일 생성
+- [x] Step 2-6 — 서비스 계정 이메일 확인
+- [x] Step 3 — 구글 시트에 서비스 계정 이메일 공유
+- [ ] Step 4 — Gemini API 키 발급
+- [ ] Step 5 — .env 파일 작성
+- [ ] Step 6 — `python pipeline.py` 실행
+
 
 ---
 
 ## 프로젝트 구조
 
 ```
-etl-ai-pipeline/
+util-sheetprocessing/
 ├── .env.example          ← 환경변수 템플릿
 ├── .env                  ← 실제 비밀 값 (git 제외)
 ├── .gitignore
