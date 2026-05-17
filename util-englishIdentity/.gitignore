@@ -1,0 +1,9 @@
+.env
+*.db
+*.db-wal
+*.db-shm
+.identity_checkpoint.json
+__pycache__/
+*.pyc
+.venv/
+service-account*.json
