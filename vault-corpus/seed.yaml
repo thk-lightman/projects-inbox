@@ -1,0 +1,265 @@
+goal: |
+  Build a Python CLI tool `vault-corpus` (in a new git repo at
+  ~/GIT/forMori/project-mori/vault-corpus) that transforms the user's Korean
+  Obsidian vault (1455 markdown files under 5 specific top-level directories)
+  into (a) an English mirror corpus chunked by `##` headings,
+  (b) a SQLite-VSS vector index using OpenAI text-embedding-3-large embeddings,
+  and (c) a sample set of 10 topic-cluster MOC (Map of Content) markdown files
+  generated from vector-similarity clustering. The Korean vault stays the
+  source-of-truth and is never modified; all artifacts live outside the vault.
+  The CLI must support a manual full rebuild and a git-diff-driven incremental
+  rebuild, and the storage schema must be migration-ready to pgvector.
+
+task_type: code
+
+constraints:
+  - Python >= 3.12
+  - Implementation lives in a new dedicated git repo at ~/GIT/forMori/project-mori/vault-corpus (separate from the Obsidian vault and from ~/.mindos)
+  - Input scope is exactly these directories under ~/Obsidian/Obsidian_Master_v2 — "00 Get Things Done", "01 Command Center", "02 Vision Center", "03 Resources", "05Publish" (1455 markdown files total). All other top-level directories ("04 PracticeMakesPerfect", "90System", "91 Archives", "999 LOCAL") and any hidden directories (.mindos, .obsidian, .trash, etc.) are out of scope
+  - The original Obsidian vault must never be written to, renamed, deleted, or otherwise mutated by any code path
+  - Existing infrastructure (.mindos pipeline, omnisearch plugin, dataview, all other Obsidian plugins) must remain completely untouched and unintegrated
+  - Embedding model is OpenAI text-embedding-3-large (3072 dim). Embedding requests go through the official OpenAI API
+  - Translation model is an OpenAI chat model chosen for KR→EN at low cost (default gpt-5-mini or gpt-4o-mini, exact pick configurable). One translation pass per chunk
+  - Vector store is SQLite-VSS (single-file local DB). Schema must be portable to pgvector with no chunk re-embedding (chunk_id derived as a content+path+heading hash, metadata in plain columns)
+  - Chunking unit is the `##`-heading section. Notes with no `##` headings are stored as a single chunk per note
+  - All generated MOC files and the English corpus live under the project repo (e.g. `data/mirror_en/`, `data/moc_samples/`). Nothing is written into the Obsidian vault
+  - All non-trivial OpenAI API integration points (auth, embed, translate, search) must be implemented as independently testable functions and documented step-by-step in the project README so the user can follow each API call boundary
+  - Secrets (OpenAI API key) are loaded from environment variables, never hardcoded, never committed
+  - No external dependencies beyond the standard scientific Python set (openai, sqlite-vss, scikit-learn or hdbscan for clustering, pyyaml, click or typer, tqdm). No Docker, no server processes, no background daemons
+  - No web UI, no MCP server, no LLM Wiki publishing, no chat interface, no replacement of omnisearch — those are explicit non-goals for v1
+  - File reads from the vault must skip files outside the 5 scoped directories and must skip any file whose path contains a hidden segment
+
+acceptance_criteria:
+  - |
+    AC1 — Repo bootstrap.
+    Initialize a new git repository at ~/GIT/forMori/project-mori/vault-corpus
+    with:
+      - pyproject.toml (Python >= 3.12, dependencies listed above)
+      - README.md (top-level usage + step-by-step API integration walkthrough)
+      - docs/architecture.md (storage layer / access layer split, future
+        extension points for MCP server, CLI search, LLM Wiki)
+      - .gitignore (data/, .venv/, .env, *.db, OpenAI key files)
+      - src/vault_corpus/ package skeleton with __init__.py and a typer-based
+        CLI entry point exposed as `vault-corpus`
+  - |
+    AC2 — Vault scanning.
+    Implement src/vault_corpus/scanner.py providing:
+      - list_scoped_files(vault_root: Path) -> list[Path]: returns exactly the
+        markdown files under the 5 scoped directories, never returning any
+        path with a hidden segment, never returning anything outside the vault
+      - file_fingerprint(path: Path) -> str: content+mtime hash, used for
+        delta detection
+    Add tests verifying that (a) total file count matches the expected 1455 ±
+    file-system drift, (b) no file under .obsidian/, .trash/, 04 PracticeMakesPerfect/,
+    90System/, 91 Archives/, or 999 LOCAL/ is ever returned, (c) no read or
+    write call ever targets a path outside the input scope.
+  - |
+    AC3 — Heading-based chunking.
+    Implement src/vault_corpus/chunker.py providing:
+      - chunk_note(path: Path, text: str) -> list[Chunk] where each Chunk has
+        source_path, heading_chain (ordered list of ## / ### titles leading
+        to the chunk), body, lang ("ko"), and chunk_id (stable SHA-256 hash
+        of f"{source_path}\n{heading_chain}\n{body}").
+      - Notes containing no `##` headings yield exactly one chunk covering
+        the entire note body (front-matter excluded from chunk body but
+        retained in metadata).
+      - Front-matter (between leading `---` lines) is parsed and kept as
+        metadata, not as chunk body.
+    Add tests covering: multi-heading note, no-heading note, nested ##/###
+    headings, note with only front-matter, note with code blocks containing
+    `##` that must NOT be treated as heading boundaries.
+  - |
+    AC4 — Translation pipeline.
+    Implement src/vault_corpus/translator.py providing a translate_chunk()
+    function that calls the configured OpenAI chat model with a deterministic
+    KR→EN translation prompt and returns the translated body plus the
+    translated heading_chain. The function is independently testable with a
+    mock OpenAI client. Each translated chunk is emitted as a new Chunk with
+    lang="en" and the SAME chunk_id as the Korean source (so KR↔EN are
+    explicitly linked through chunk_id). The README walkthrough must show
+    the request payload shape, the prompt template, and how to inspect a
+    single translation in isolation.
+  - |
+    AC5 — Embedding + SQLite-VSS storage.
+    Implement src/vault_corpus/store.py providing:
+      - init_db(db_path: Path): creates a sqlite-vss virtual table `chunks`
+        with columns chunk_id (TEXT PK), source_path (TEXT), heading_chain
+        (JSON TEXT), lang (TEXT), body (TEXT), front_matter (JSON TEXT),
+        build_ts (TEXT), file_fingerprint (TEXT), embedding (BLOB), and an
+        index on source_path.
+      - upsert_chunk(chunk, embedding): idempotent insert/update keyed by
+        chunk_id.
+      - search(query: str, k: int) -> list[Chunk]: cosine-similarity top-k
+        over English chunks only.
+      - embed(text: str) -> list[float]: calls OpenAI
+        text-embedding-3-large, returns 3072-dim vector. Independently
+        testable.
+    Schema docstring must explicitly note: "Migration to pgvector requires
+    only re-creating the chunks table with the same columns and copying rows
+    — no re-embedding needed because chunk_id is content-derived."
+  - |
+    AC6 — Full and delta build CLI.
+    Wire a typer CLI exposing:
+      - vault-corpus build [--vault PATH] : full rebuild — scan, chunk,
+        translate (only chunks whose chunk_id is not already in DB with
+        lang="en"), embed, upsert. Idempotent: re-running with no vault
+        changes performs zero translation/embedding API calls.
+      - vault-corpus build --delta [--vault PATH] : git-diff-driven
+        incremental — reads `git diff --name-only` against HEAD~1 inside the
+        vault repo to find changed markdown files within scope, then
+        reprocesses only those files (re-chunks them, deletes obsolete
+        chunks whose source_path matches but whose chunk_id is no longer
+        produced, re-translates and re-embeds the new chunks).
+      - vault-corpus status : prints DB stats (chunk counts per lang,
+        last build_ts, file count).
+    Each command logs total API call count and estimated USD cost.
+  - |
+    AC7 — Topic clustering + MOC sample generation.
+    Implement src/vault_corpus/cluster.py and a CLI subcommand
+    `vault-corpus moc generate --n 10` that:
+      - Loads all English chunk embeddings from the DB
+      - Runs HDBSCAN (preferred) or k-means clustering with sensible defaults
+        documented in docs/architecture.md
+      - Picks the 10 largest non-noise clusters
+      - For each cluster, generates a MOC markdown file at
+        data/moc_samples/MOC-<slug>.md containing: cluster topic title
+        (LLM-generated 3–8 word summary), cluster size, the top-5 most
+        central chunks listed as wikilinks back to the SOURCE Korean note
+        path under the Obsidian vault, and a 2–3 sentence cluster summary
+      - MOC files live ONLY inside the project repo's data/moc_samples/.
+        Nothing is written into the Obsidian vault.
+  - |
+    AC8 — Smoke test command.
+    Implement `vault-corpus smoke-test` that runs 5 hard-coded test queries
+    (defined in src/vault_corpus/smoke_queries.yaml and editable by the user)
+    against the English index, prints top-5 results per query with source
+    note path, heading_chain, and similarity score, and exits non-zero if
+    any query returns fewer than 3 results above a configurable similarity
+    floor (default 0.20). This is the automated verification gate.
+  - |
+    AC9 — README walkthrough.
+    The repo README must contain a dedicated section "API Integration —
+    Step-by-Step" that walks through each OpenAI API touchpoint in isolation:
+    auth (env var loading), single-text embedding call (request payload,
+    response shape, how to inspect), single translation call, end-to-end
+    search call. Each step must include a runnable Python snippet of ≤ 15
+    lines. This satisfies the user's request to "explain each API integration
+    step in detail".
+
+ontology_schema:
+  name: VaultCorpus
+  description: |
+    Build-time transformation pipeline that derives an English, searchable
+    chunk corpus and topic-cluster MOC samples from a Korean Obsidian vault,
+    keeping the vault as immutable source-of-truth and the corpus + vector
+    index as fully regenerable derived artifacts.
+  fields:
+    - name: vault_note
+      field_type: entity
+      description: A single Korean markdown file under one of the 5 scoped vault directories
+      required: true
+    - name: chunk
+      field_type: entity
+      description: A heading-bounded segment of a vault_note (or the whole note when no `##` heading exists), identified by a content-derived chunk_id
+      required: true
+    - name: translation
+      field_type: action
+      description: KR→EN transformation of a single chunk via the OpenAI chat API, producing an English chunk that shares chunk_id with its Korean source
+      required: true
+    - name: embedding
+      field_type: entity
+      description: 3072-dim OpenAI text-embedding-3-large vector attached to an English chunk
+      required: true
+    - name: vector_index
+      field_type: entity
+      description: SQLite-VSS virtual table storing chunks and embeddings, schema portable to pgvector
+      required: true
+    - name: topic_cluster
+      field_type: entity
+      description: A density-based cluster of English chunk embeddings representing one coherent topic
+      required: true
+    - name: moc
+      field_type: entity
+      description: A generated Map-of-Content markdown file summarizing one topic_cluster and back-linking to its source vault_notes
+      required: true
+    - name: build_command
+      field_type: action
+      description: Full or delta pipeline run that scans, chunks, translates, embeds, and upserts
+      required: true
+    - name: search_command
+      field_type: action
+      description: Top-k cosine-similarity retrieval over English embeddings, returning chunks with source_path and heading_chain
+      required: true
+    - name: smoke_test
+      field_type: action
+      description: Automated 5-query verification pass that gates "is the corpus usable"
+      required: true
+    - name: source_path
+      field_type: string
+      description: Absolute or vault-relative path of the original Korean vault_note
+      required: true
+    - name: heading_chain
+      field_type: array
+      description: Ordered list of `##`/`###` titles leading to the chunk inside its source vault_note
+      required: true
+    - name: chunk_id
+      field_type: string
+      description: Content-derived SHA-256 hash of (source_path, heading_chain, body); stable across DB engines so pgvector migration needs no re-embedding
+      required: true
+
+evaluation_principles:
+  - name: correctness
+    description: Chunking, translation, embedding, and storage faithfully preserve the source vault content; no chunk loses content, no chunk is silently truncated, no vault file is ever written to
+    weight: 1.0
+  - name: retrieval_quality
+    description: smoke-test 5 queries each return at least 3 chunks above the similarity floor, and the top-1 chunk is intuitively the right one as judged by the operator
+    weight: 0.9
+  - name: clustering_usefulness
+    description: The 10 generated MOC samples are judged by the operator to represent coherent, distinct topics rather than noise or arbitrary slices
+    weight: 0.8
+  - name: reproducibility
+    description: Running `vault-corpus build` twice with no vault changes produces zero API calls; `vault-corpus build --delta` reprocesses only files surfaced by `git diff`
+    weight: 0.8
+  - name: extension_readiness
+    description: Storage schema and code boundaries are explicitly factored so that future MCP server, CLI search UI, or LLM Wiki adapters can sit on top without reshaping the storage layer; pgvector migration requires no re-embedding
+    weight: 0.7
+  - name: vault_immutability
+    description: No code path under any flag or error condition writes to, renames, or deletes any file inside the Obsidian vault directory
+    weight: 1.0
+  - name: simplicity
+    description: No premature abstraction, no unused features, no scaffolding for non-goals (MCP server, Wiki, chat UI). Functions stay small and independently testable
+    weight: 0.7
+
+exit_conditions:
+  - name: smoke_test_passes
+    description: The automated smoke test gate succeeds on the full English index
+    evaluation_criteria: "`vault-corpus smoke-test` exits 0 — all 5 queries return at least 3 results above the similarity floor"
+  - name: moc_review_passes
+    description: Operator review of the 10 generated MOC sample files confirms clustering usefulness
+    evaluation_criteria: Operator confirms in writing that at least 7 of 10 MOC samples represent coherent, distinct topics
+  - name: delta_build_correct
+    description: Incremental rebuild reprocesses exactly the files surfaced by git diff
+    evaluation_criteria: Modifying 2 vault files and running `vault-corpus build --delta` reprocesses only those 2 files (counted via debug log) and updates DB chunk count correctly
+  - name: vault_untouched
+    description: Vault directory is byte-for-byte identical before and after a full build
+    evaluation_criteria: "`git status` inside the vault repo shows no unexpected changes attributable to vault-corpus after a full build run"
+  - name: all_ac_met
+    description: All acceptance criteria evaluated and passing
+    evaluation_criteria: Stage-2 semantic evaluation score >= 0.8 for every AC
+
+metadata:
+  seed_id: vault_corpus_v1
+  version: 1.0.0
+  ambiguity_score: 0.10
+  interview_id: interview_20260516_100855
+  parent_seed_id: null
+  notes: |
+    Authored manually after the MCP-driven interview captured all decisions
+    but the MCP server suffered the known v0.38.2 max_turns=1 / tool_use
+    interaction bug (ouroboros issue #781) and the in-session MCP process
+    was killed during the recovery attempt, severing the deferred tools for
+    this session. All decisions are sourced verbatim from the completed
+    interview ledger; ambiguity is rated low because every cross-cutting
+    track (consumer, scope, hosting, vector store, embedding model, chunk
+    unit, MOC location, trigger, deliverable form, verification) was
+    explicitly resolved with the user before this seed was written.

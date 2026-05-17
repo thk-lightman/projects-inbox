@@ -1,0 +1,22 @@
+# Default smoke-test queries for `vault-corpus smoke-test`.
+#
+# Each query exercises a distinct topical lobe of the vault. The gate is
+# "every query returns >= 3 chunks above the similarity floor"; if you
+# tighten or widen the floor, re-tune these to keep coverage honest.
+#
+# Schema: top-level `queries:` list of mappings. Required field `query`
+# (non-empty string). Optional field `description` (string) is purely
+# operator-facing — it appears in `vault-corpus smoke-test` output so you
+# can tell at a glance which lobe a failing query belongs to.
+
+queries:
+  - query: "how to write daily standup notes"
+    description: "00 Get Things Done — daily-ops productivity recall"
+  - query: "transformer architecture and attention mechanism"
+    description: "03 Resources — deep-learning research recall"
+  - query: "personal goal setting and quarterly planning"
+    description: "02 Vision Center — long-horizon planning recall"
+  - query: "PARA method for organizing notes and resources"
+    description: "01 Command Center — knowledge-management methodology recall"
+  - query: "python testing best practices and pytest fixtures"
+    description: "05Publish — tooling / craft recall"
