@@ -1,0 +1,421 @@
+goal: |
+  Build a Python CLI tool `identity-corpus` (in a new git repo at
+  ~/GIT/forMori/project-mori/identity-corpus) that turns the user's
+  curated identity materials — Korean long-form notes the user wrote
+  themselves (KR-self) and English reference sentences the user
+  hand-selected (EN-ref) — into (a) a deduplicated sentence-level bank
+  keyed by pragmatic tags, and (b) a regenerable `voice_profile.md`
+  that distills the user's voice into reusable patterns + exemplar
+  sentences for English-speaker mode self-transfer.
+
+  This is the SEQUEL repo to vault-corpus and the REPLACEMENT for the
+  abandoned util-englishIdentity attempt. The design directly absorbs
+  three failures of that earlier attempt:
+
+    1. Indiscriminate 1000+ file scanning — fixed by scope-locking to
+       two opt-in folders (IDENTITY/kr-self, IDENTITY/en-ref) and
+       refusing any flag that widens scope.
+    2. Per-sentence translation cost blowup — fixed by KR-direct
+       embedding + incremental cosine-threshold clustering, then
+       translating ONLY the cluster representative sentence (one LLM
+       call per cluster, not per sentence).
+    3. LLM-only labeling with no cross-batch consistency — fixed by
+       deterministic embedding clustering (centroid pool persists in
+       DB) plus an explicit pragmatic taxonomy.yaml that the LLM
+       extends with "suggested-new-tag" entries the operator promotes
+       or discards by hand.
+
+  The infrastructure layer (cost tracker, embedding adapter,
+  translator adapter, SQLite store pattern) is reused as a path
+  dependency on the sibling vault-corpus repo. Identity-corpus owns
+  only what is identity-specific: dual-folder scanner, sentence
+  tokenizer, incremental clusterer, hybrid pragmatic tagger,
+  voice-profile generator, review state machine.
+
+task_type: code
+
+constraints:
+  - Python >= 3.12
+  - Implementation lives in a new dedicated git repo at ~/GIT/forMori/project-mori/identity-corpus (separate from vault-corpus, separate from util-englishIdentity, separate from the Obsidian vault)
+  - vault-corpus is a path dependency (`vault-corpus = { path = "../vault-corpus", develop = true }`) — identity-corpus reuses vault_corpus.cost.ApiCostTracker, vault_corpus.store.embed, vault_corpus.translator.translate_chunk, and the SQLite schema pattern. Identity-corpus must NOT fork or vendor vault-corpus code
+  - Input scope is exactly these two directories under ~/Obsidian/Obsidian_Master_v2/04 PracticeMakesPerfect/IDENTITY/ — "kr-self/" (Korean long-form notes the user wrote) and "en-ref/" (English reference notes the user hand-picked). Every other vault location is out of scope at the scanner level. There is NO flag that broadens the scope beyond these two directories — that single rule is the antidote to the util-englishIdentity 1000-file mistake
+  - The Obsidian vault must never be written to by any code path (reads only). All identity-corpus artifacts live under the project repo (data/sentence_bank.db, data/voice_profile.md, data/review_*.tsv)
+  - Embedding model is OpenAI text-embedding-3-large (3072 dim) via vault_corpus.store.embed. Korean source sentences are embedded DIRECTLY — translation happens AFTER clustering, on the cluster representative only
+  - Translation model is the same OpenAI chat model identity-corpus depends on via vault_corpus.translator (default gpt-4o-mini, configurable). One translation call per cluster representative, never per sentence
+  - Pragmatic tagger uses an OpenAI chat model (default gpt-4o-mini) and runs one call per cluster (not per sentence). The taxonomy.yaml is the source of truth for known tags; the LLM may emit "suggested_new_tags" which land in a separate column for operator review
+  - Vector store is SQLite (single file). The sentences table carries an embedding BLOB and chunk_id-equivalent sentence_id (content-derived hash) so a future pgvector migration needs no re-embedding
+  - Cluster threshold (cosine similarity for attach-vs-new-cluster) is configurable; default 0.78 (the threshold the abandoned util-englishIdentity converged on after manual tuning)
+  - Sentence-tokenizer rules are language-aware: Korean sentences require ≥ 5 Hangul characters; English sentences require ≥ 20 alphabetic characters. Code blocks and Obsidian wikilinks are stripped before tokenization. These thresholds match the util-englishIdentity heuristics that the operator already validated against their own writing style
+  - All non-trivial OpenAI integration points (embed, translate, label) must be independently testable via injected client objects and documented in the README's "API Integration" section with a runnable ≤ 15-line snippet per touchpoint
+  - Secrets (OpenAI API key) loaded from environment variables only; never hardcoded, never committed
+  - No external dependencies beyond vault-corpus's transitive set plus a sentence-tokenizer library (default: a small in-house regex tokenizer; allowed alternative: `kss` for Korean). No Docker, no daemons, no web UI
+  - No Anki sync, no Google Sheets sync, no chat UI, no MCP server. Those are explicit non-goals for v1 — the abandoned util-englishIdentity tried to bundle sync surfaces and it inflated scope. v1 ends at a queryable sentence bank + a regenerated voice_profile.md
+  - Review state machine has exactly three states per sentence: `draft` (auto-extracted, not human-reviewed), `locked` (human-reviewed, promoted to voice_profile inclusion), `archived` (human-rejected, never re-surfaces). No other states. State transitions happen ONLY via the `identity-corpus review import` command consuming an edited TSV — never silently
+
+acceptance_criteria:
+  - |
+    AC1 — Repo bootstrap.
+    Initialize a new git repository at ~/GIT/forMori/project-mori/identity-corpus
+    with:
+      - pyproject.toml (Python >= 3.12, declares dependency on the sibling
+        vault-corpus repo via a path entry; declares typer, pyyaml,
+        sqlite-vss, openai (re-exposed transitively), tqdm)
+      - README.md with usage block, the explicit "lineage" section
+        explaining the relationship to vault-corpus (infrastructure)
+        and util-englishIdentity (failed precursor), and an
+        "API Integration — Step-by-Step" section covering each LLM
+        touchpoint in isolation
+      - docs/architecture.md describing storage layer, sentence-level
+        chunking rationale, cluster threshold tuning notes, taxonomy
+        evolution model, and the pgvector migration path inherited
+        from vault-corpus
+      - .gitignore (data/, .venv/, .env, *.db, OpenAI key files)
+      - taxonomy.yaml seeding the hybrid pragmatic taxonomy with the
+        FIVE starting axes (58 leaves total) — axes I/II/III are the
+        operator's pre-existing rhetorical taxonomy (Structural
+        Frames, Narrative Tools, Functional Acts) carried forward
+        intact; axes IV (Interview Moves: Opening, Question_Handling,
+        STAR_Component, Self_Positioning, Closing) and V (Epistemic
+        & Register: Certainty, Register, Stance) are added
+        specifically for English-language interview self-transfer,
+        the project's stated core goal. Hierarchical 3-level
+        structure (axis > group > leaf). Each cluster receives at
+        most one leaf per axis (or null when not applicable)
+      - src/identity_corpus/ package skeleton with __init__.py and a
+        typer-based CLI exposed as `identity-corpus`
+
+  - |
+    AC2 — Dual-folder scanner.
+    Implement src/identity_corpus/scanner.py providing:
+      - list_identity_files(vault_root: Path) -> dict[str, list[Path]]
+        returning {"kr-self": [...], "en-ref": [...]}, restricted to
+        markdown files under ~/Obsidian/.../04 PracticeMakesPerfect/IDENTITY/kr-self/
+        and .../IDENTITY/en-ref/ ONLY. Hidden segments skipped. Any
+        path outside the two scoped folders is refused even if passed
+        explicitly via API
+      - file_fingerprint(path: Path) -> str — reuse vault_corpus.scanner.file_fingerprint
+      - A path-confinement test verifying that pointing the scanner at
+        a vault root yields ZERO results for any path under "00 Get
+        Things Done", "01 Command Center", "03 Resources", or ".obsidian/".
+        This test is the structural guarantee that the util-englishIdentity
+        1000-file mistake cannot recur
+
+  - |
+    AC3 — Language-aware sentence tokenizer.
+    Implement src/identity_corpus/tokenizer.py providing:
+      - tokenize_sentences(text: str, lang: str) -> list[str]
+        - lang="kr": split on sentence-final Korean punctuation
+          (".", "?", "!", "다.", "요.", "임.", "음.", newline-followed-by-
+          capital-Hangul). Keep only sentences with ≥ 5 Hangul chars
+          (excludes fragments, headings, tag lines, table rows)
+        - lang="en": split on standard sentence boundaries
+          (period+space+capital, "?", "!"). Keep only sentences with
+          ≥ 20 alphabetic chars
+      - Strips fenced code blocks (``` and ~~~), Obsidian wikilinks
+        ([[Note Name]]), and markdown heading/list/table prefixes
+        before tokenization. Preserves the original substring so the
+        sentence body matches what the operator wrote
+      - sentence_id(text: str, source_path: Path) -> str — content-derived
+        SHA-256 of (normalized_text, source_path). Stable across runs
+    Tests cover: KR note with mixed headings + lists + code blocks
+    yields only true sentences; EN note with bullet lists yields only
+    sentence-grade lines; both thresholds are enforced (4-char Korean
+    fragment, 19-char English fragment both excluded)
+
+  - |
+    AC4 — Embedding + incremental nearest-neighbor clusterer.
+    Implement src/identity_corpus/clusterer.py providing:
+      - embed_sentence(text: str, client) -> list[float] — thin wrapper
+        around vault_corpus.store.embed. Korean sentences are embedded
+        directly; no pre-translation. Test verifies this by asserting
+        the embedding call sees the original Korean substring
+      - attach_or_create_cluster(db, sentence_id, embedding, threshold=0.78)
+        -> tuple[int, bool]: looks up existing centroid pool, returns
+        (cluster_id, was_created). When cosine_max ≥ threshold the
+        sentence attaches to the best-match cluster and the cluster
+        centroid is incrementally recomputed (running mean over its
+        members). When cosine_max < threshold a new cluster row is
+        inserted
+      - recompute_centroid(db, cluster_id) — utility used after attach;
+        also exposed for batch re-cluster operations
+    Threshold is a single configurable value (CLI flag + config file)
+    so the operator can re-cluster with a different cutoff without
+    re-embedding. Tests cover: two near-duplicate KR sentences attach
+    to the same cluster; an unrelated sentence creates a new cluster;
+    centroid update converges to the geometric mean of attached
+    sentence vectors
+
+  - |
+    AC5 — Hybrid pragmatic tagger.
+    Implement src/identity_corpus/tagger.py providing:
+      - load_taxonomy(path: Path) -> dict[str, list[str]] reading
+        taxonomy.yaml (the hybrid taxonomy — operator-promoted tags
+        per dimension)
+      - tag_cluster(db, cluster_id, client, taxonomy, model="gpt-4o-mini")
+        runs ONE chat-completion call per cluster (NOT per sentence)
+        with a deterministic prompt that:
+          - Receives the cluster's sentences (top-N most-central
+            sentences by cosine to centroid; default N=5)
+          - Receives the current taxonomy.yaml axes + groups + leaves
+            (the 5-axis hybrid taxonomy: I Structural Frames,
+            II Narrative Tools, III Functional Acts, IV Interview
+            Moves, V Epistemic & Register)
+          - Returns a JSON object: {axis_id: leaf, ...} for known
+            tags PLUS a "suggested_new_tags" list of (axis_id, group,
+            leaf) tuples the LLM thinks would extend the taxonomy.
+            Each cluster gets at most one leaf per axis (or null when
+            the axis does not apply to the cluster's sentences)
+      - apply_tags(db, cluster_id, llm_response) — writes the known
+        tags to the cluster row and appends suggestions to a
+        suggested_tags table keyed by (dimension, tag)
+      - promote_suggested_tag(db, dimension, tag) / reject_suggested_tag
+        — operator actions that promote a suggestion into taxonomy.yaml
+        or remove it from the suggestion table
+    README documents that one cluster = one tagger call (cost-bounded).
+    Tests cover: tagger prompt is deterministic given identical input;
+    suggested_new_tags land in the right table; promote rewrites
+    taxonomy.yaml then re-tagging picks it up
+
+  - |
+    AC6 — Minimal translator (cluster-representative only).
+    Implement src/identity_corpus/translator.py providing:
+      - pick_representative(db, cluster_id) -> str — returns the
+        sentence closest to the cluster centroid (cosine-max). This
+        sentence — and only this sentence — is translated
+      - translate_representative(db, cluster_id, client) — invokes
+        vault_corpus.translator.translate_chunk on a wrapped Chunk
+        object built from the representative sentence; stores the
+        English mirror in the cluster row under `en_text`
+      - Translation never runs for an en-ref-origin cluster (already
+        English). Translation runs at most ONCE per cluster across
+        all rebuild invocations (idempotent on warm DB).
+    Tests cover: a KR cluster gets exactly one translation call;
+    re-running the pipeline on the same DB triggers zero translation
+    calls; an EN cluster never enters the translator path
+
+  - |
+    AC7 — SQLite sentence_bank schema + review state machine.
+    Implement src/identity_corpus/store.py providing init_db(path)
+    that creates the following SQLite schema (pgvector-portable, same
+    pattern as vault_corpus.store):
+      - sentences table: sentence_id PK, source_path, origin_lang
+        ("kr" or "en"), kr_text (nullable), en_text (nullable),
+        embedding BLOB (3072 float32), cluster_id (FK), status
+        (draft|locked|archived, default draft), build_ts, file_fingerprint
+      - clusters table: cluster_id PK, centroid BLOB, member_count,
+        representative_sentence_id, tags_json (the known-dimension
+        tags), en_translation, build_ts
+      - suggested_tags table: row per (dimension, tag) pair surfaced
+        by the tagger; columns dimension, tag, first_seen_cluster_id,
+        first_seen_ts, count
+      - taxonomy_log table: append-only record of promote/reject
+        operator decisions; columns ts, action, dimension, tag, note
+    State machine on sentences.status:
+      - draft → locked via `identity-corpus review import` consuming
+        a TSV edited by the operator (status column edited to
+        "locked")
+      - draft → archived via the same import path
+      - locked → archived likewise (operator can demote)
+      - No automatic transitions; no LLM-triggered transitions
+    Schema docstring must state: "Migration to pgvector requires only
+    re-creating the tables with the same columns and copying rows; no
+    re-embedding because sentence_id is content-derived."
+
+  - |
+    AC8 — voice_profile.md generator + review TSV import/export.
+    Implement src/identity_corpus/profile.py providing:
+      - generate_profile(db, out_path: Path) — emits a markdown file
+        with sections that mirror the 5-axis taxonomy so the
+        operator can locate "how I move through X" patterns:
+          - "Voice Summary" — narrative paragraph derived from
+            aggregate tag distribution: top 3 leaves from axis V
+            (Epistemic & Register) Certainty + Register + Stance
+            groups characterizing the operator's default tone
+          - "Signature Phrases" — top 10 clusters by member_count
+            with status=locked, listing representative en_text + its
+            (axis, leaf) tag triples + contributing note count
+          - "Structural Frames in My Voice" — clusters tagged on
+            axis I (Structural Frames), grouped by axis-I group
+            (Opening, Cause_and_Effect, Listing, Contrast, ...) so
+            the operator sees their go-to discourse moves
+          - "Narrative Tools I Use" — clusters tagged on axis II
+            (Hypothesis, Definition, Exemplification, Analogy)
+          - "Interview Moves" — clusters tagged on axis IV
+            (Opening/Question_Handling/STAR_Component/Self_Positioning/
+            Closing). Critical section for the project's stated core
+            goal of English-interview self-transfer; surfaces which
+            interview moves the operator already has voice patterns
+            for vs. which are missing from their corpus
+          - "Calibration Inventory" — clusters tagged on axis V
+            (Epistemic & Register), grouped by axis-V group, listing
+            the operator's available tone calibrations and
+            highlighting gaps (e.g. lots of Hedged sentences but no
+            Confident_Direct samples)
+        ONLY locked sentences are included. Draft / archived are
+        excluded. This is the gate that prevents auto-extracted
+        noise from polluting the profile
+      - export_review_tsv(db, out_path) — writes a TSV with
+        columns: sentence_id, cluster_id, origin_lang, status,
+        kr_text, en_text, tags, suggested_action (blank). Operator
+        edits suggested_action column ("lock", "archive", "skip")
+      - import_review_tsv(db, in_path) — reads operator edits,
+        applies status transitions, logs decisions
+    Tests cover: profile generation with mixed-status sentences
+    only includes locked rows; TSV round-trip preserves sentence_id;
+    import with an unknown action is rejected with a clear error
+
+  - |
+    AC9 — CLI + cost tracking + README walkthrough.
+    Wire a typer CLI exposing:
+      - identity-corpus build [--threshold 0.78] — full pipeline:
+        scan IDENTITY/ folders, tokenize, embed, attach-or-cluster,
+        tag clusters, translate cluster reps, upsert. Idempotent on
+        unchanged input
+      - identity-corpus build --delta [--ref HEAD~1] — git-diff-driven
+        incremental, manually triggered. Runs `git diff --name-only
+        <ref>` inside the Obsidian vault repo (vault is assumed to be
+        a git repo — the typical Obsidian power-user setup), filters
+        the diff to paths under IDENTITY/kr-self/ or IDENTITY/en-ref/
+        only, and reprocesses just those files (re-tokenize → re-embed
+        new sentences → attach to clusters → drop obsolete sentence
+        rows for that source_path whose sentence_id is no longer
+        produced). Reuses the same git-diff helper pattern shipped in
+        vault-corpus (`vault_corpus.pipeline.git_diff_changed_files`)
+        with the IDENTITY/ scope filter swapped in. Default ref is
+        HEAD~1; --ref overrides for multi-commit catch-up
+      - identity-corpus status — DB stats: sentence counts per
+        status, cluster count, last build_ts, taxonomy size,
+        suggested-tag count
+      - identity-corpus tags list — current taxonomy.yaml + pending
+        suggestions
+      - identity-corpus tags promote <dimension> <tag> /
+        identity-corpus tags reject <dimension> <tag> — taxonomy
+        edits
+      - identity-corpus review export [--out PATH] — TSV export
+      - identity-corpus review import <PATH> — TSV import +
+        status transitions
+      - identity-corpus profile generate [--out PATH] — regenerate
+        voice_profile.md
+      - identity-corpus search "..." [--tag dim:tag] [--status locked]
+        — query the bank by text or tag filter
+    Every command that hits an OpenAI endpoint accumulates calls in
+    a vault_corpus.cost.ApiCostTracker and prints the summary at
+    end-of-run. The README "API Integration — Step-by-Step" section
+    walks through each touchpoint (embed, label, translate) with a
+    runnable ≤ 15-line snippet so the operator can inspect each
+    boundary in isolation — same pattern as vault-corpus AC9
+
+ontology_schema:
+  name: IdentityCorpus
+  description: |
+    Pipeline that derives a deduplicated sentence bank + voice
+    profile from the user's curated identity notes, designed to
+    enable Korean-to-English self-transfer without the volume
+    blowup that sank the util-englishIdentity attempt.
+  fields:
+    - name: identity_note
+      field_type: entity
+      description: A markdown file under IDENTITY/kr-self/ (Korean long-form) or IDENTITY/en-ref/ (English reference), opt-in by being placed there
+      required: true
+    - name: sentence
+      field_type: entity
+      description: A language-tokenized sentence extracted from an identity_note, identified by content-derived sentence_id
+      required: true
+    - name: embedding
+      field_type: entity
+      description: 3072-dim OpenAI vector attached to a sentence, computed on the original substring (no pre-translation for KR)
+      required: true
+    - name: cluster
+      field_type: entity
+      description: A cosine-similarity grouping of near-duplicate sentences, incrementally maintained via centroid pool; the unit on which LLM tagging and translation happen exactly once
+      required: true
+    - name: pragmatic_tag
+      field_type: entity
+      description: A (axis, group, leaf) triple from taxonomy.yaml attached to a cluster, describing how the cluster's sentences function. 5-axis hybrid taxonomy — I Structural Frames, II Narrative Tools, III Functional Acts (operator's pre-existing rhetorical axes) + IV Interview Moves, V Epistemic & Register (added for English-interview self-transfer)
+      required: true
+    - name: suggested_tag
+      field_type: entity
+      description: A (dimension, value) pair the LLM emitted but the taxonomy has not yet adopted; awaits operator promote/reject
+      required: true
+    - name: translation
+      field_type: action
+      description: One KR→EN call per KR-origin cluster representative; never per sentence
+      required: true
+    - name: voice_profile
+      field_type: entity
+      description: A regenerable markdown summary derived solely from locked-status clusters, distilling the operator's voice into reusable patterns + exemplar sentences
+      required: true
+    - name: review_state
+      field_type: string
+      description: One of draft / locked / archived; transitions only via TSV review import
+      required: true
+    - name: build_command
+      field_type: action
+      description: Full or delta pipeline run (scan, tokenize, embed, cluster, tag, translate reps)
+      required: true
+
+evaluation_principles:
+  - name: scope_discipline
+    description: Pipeline only ever reads files inside IDENTITY/kr-self/ and IDENTITY/en-ref/. No code path widens scope. This is the direct fix for the util-englishIdentity 1000-file failure
+    weight: 1.0
+  - name: translation_minimality
+    description: Translation runs at most ONCE per cluster, and never per sentence. A full build with N sentences in K clusters performs exactly K_kr translate calls where K_kr is the count of KR-origin clusters
+    weight: 1.0
+  - name: dedup_effectiveness
+    description: Near-duplicate sentences (operator-judged) end up in the same cluster ≥ 80% of the time at threshold 0.78. Measured via operator spot-check on a sample of 30 random clusters
+    weight: 0.9
+  - name: taxonomy_evolution
+    description: Suggested-new-tags surface coherent extensions the operator chooses to promote, NOT noise. Operator promotes ≥ 30% of surfaced suggestions over the first three review cycles
+    weight: 0.7
+  - name: voice_profile_usability
+    description: The generated voice_profile.md is judged by the operator to faithfully reflect their voice (signature phrases, hedging style, logic templates) — usable as a self-transfer reference when speaking English
+    weight: 0.9
+  - name: reproducibility
+    description: Running `identity-corpus build` twice on unchanged input performs zero OpenAI calls; `build --delta` reprocesses only files whose file_fingerprint changed
+    weight: 0.8
+  - name: review_gate_integrity
+    description: No sentence ever transitions out of status=draft except via TSV review import; voice_profile NEVER includes draft or archived sentences
+    weight: 1.0
+  - name: simplicity
+    description: No premature abstraction, no Anki/Sheets/MCP sync surfaces, no chat UI. Functions stay small and independently testable. Reuse vault-corpus modules instead of re-implementing
+    weight: 0.7
+
+exit_conditions:
+  - name: end_to_end_smoke
+    description: A 10-note seeded IDENTITY/ corpus produces a non-empty sentence_bank.db with clusters, tags, and a generated voice_profile.md
+    evaluation_criteria: "After `identity-corpus build` on the seed corpus, `identity-corpus status` shows clusters > 0 and `identity-corpus profile generate` writes a non-empty voice_profile.md"
+  - name: scope_immutability
+    description: No code path under any flag reads or writes any file outside the two IDENTITY/ subfolders
+    evaluation_criteria: "Path-confinement test in tests/test_scanner_confinement.py passes; manual `find` audit of build run shows zero reads outside IDENTITY/"
+  - name: translation_minimality_proven
+    description: Translation call count equals KR-cluster count on cold build and equals 0 on warm rebuild
+    evaluation_criteria: "Integration test seeds 3 KR clusters + 2 EN clusters; cold build records exactly 3 translate calls; second build records 0"
+  - name: review_gate_enforced
+    description: voice_profile.md excludes draft and archived sentences
+    evaluation_criteria: "Integration test inserts mixed-status sentences; generated voice_profile.md contains only locked-status content"
+  - name: all_ac_met
+    description: All acceptance criteria pass stage-2 semantic evaluation
+    evaluation_criteria: Stage-2 score ≥ 0.8 for every AC
+
+metadata:
+  seed_id: identity_corpus_v1
+  version: 1.0.0
+  ambiguity_score: 0.15
+  parent_seed_id: vault_corpus_v1
+  related_artifacts:
+    - ~/GIT/forMori/project-mori/vault-corpus (infrastructure dependency)
+    - ~/GIT/forMori/project-mori/util-englishIdentity (failed precursor — design insights absorbed, code archived)
+  notes: |
+    Authored after the user clarified that vault-corpus was always
+    intended as the prequel — an infrastructure validation step for
+    embedding/vector/RAG patterns — and that the real target is a
+    voice-transfer sentence bank that fixes the three failures of
+    util-englishIdentity:
+      (1) indiscriminate 1000+ file scanning,
+      (2) per-sentence translation cost blowup,
+      (3) LLM-only labeling with no cross-batch consistency.
+    Every constraint and AC in this seed is traceable back to one of
+    those three failures, OR to the operator's explicit design
+    answers (dual KR+EN input, sentence_bank + voice_profile two-
+    layer output, hybrid taxonomy, IDENTITY/ folder convention,
+    100-300 note initial scope).

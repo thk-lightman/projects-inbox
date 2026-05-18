@@ -1,0 +1,140 @@
+# Hybrid pragmatic taxonomy for identity-corpus.
+#
+# 5 axes × 58 leaves total. Hierarchical 3-level structure (axis > mid > leaf).
+# Each cluster receives at most one leaf per axis (or null when not applicable).
+#
+# Axes I/II/III are the operator's pre-existing taxonomy carried forward intact.
+# Axes IV (Interview Moves) and V (Epistemic & Register) were added specifically
+# for English-language interview self-transfer — the project's stated core goal.
+#
+# The LLM tagger may emit suggested_new_tags that land in a separate DB table;
+# `identity-corpus tags promote <axis> <leaf>` rewrites this file to adopt them.
+
+version: 1
+
+axes:
+  # ------------------------------------------------------------------
+  # I. Structural Frames — discourse organization, signposting
+  # ------------------------------------------------------------------
+  I_structural_frames:
+    display_name: "I. 구조적 틀"
+    rationale: "Makes argument followable. Missing signposting = 'rambling' judgment."
+    groups:
+      Opening:
+        - Direct
+        - Topic
+        - Transition
+      Cause_and_Effect:
+        - Mechanism
+        - Enabler
+        - Prevention
+      Listing:
+        - Addition
+        - Ranking
+      Contrast:
+        - Direct
+        - Concession
+      Problem_Solving:
+        - Analysis
+        - Action
+      Sequence:
+        - Chronology
+        - Process
+      Change:
+        - Timeline
+        - Shift
+      Refutation:
+        - Correction
+        - Outweigh
+
+  # ------------------------------------------------------------------
+  # II. Narrative Tools — claim → concrete elaboration
+  # ------------------------------------------------------------------
+  II_narrative_tools:
+    display_name: "II. 서술 도구"
+    rationale: "Makes claims concrete. Bare assertions = 'vague' judgment."
+    groups:
+      Hypothesis:
+        - If_not
+        - If_so
+      Definition:
+        - Meaning
+        - Elaboration
+      Exemplification:
+        - Case
+        - Personal
+      Analogy:
+        - Simile
+        - Metaphor
+
+  # ------------------------------------------------------------------
+  # III. Functional Acts — speech-act wrap; positioning signals
+  # ------------------------------------------------------------------
+  III_functional_acts:
+    display_name: "III. 기능 수행"
+    rationale: "Signals confidence + decisiveness through act framing."
+    groups:
+      Reporting:
+        - Statement
+        - Reasoning
+        - Agreement
+      Conclusion:
+        - Wrap
+        - Bottom_line
+
+  # ------------------------------------------------------------------
+  # IV. Interview Moves — genre-specific to high-stakes Q&A
+  # ------------------------------------------------------------------
+  IV_interview_moves:
+    display_name: "IV. 면접 무브"
+    rationale: "Genre-specific moves native interviewers expect. Missing these = 'doesn't fit corporate culture' / 'sounds essay-like, not interview-like'."
+    groups:
+      Opening:
+        - Elevator_Pitch        # 10–30s self-intro
+        - Hook                  # attention-grabbing opener
+      Question_Handling:
+        - Clarify               # confirm question intent before answering
+        - Reframe               # restate question on better terms
+        - Time_Buy              # explicit thinking-time signal ("That's a great question...")
+        - Signpost_Answer       # "Let me address this in two parts..."
+      STAR_Component:
+        - Situation             # background context
+        - Task                  # responsibility / goal
+        - Action                # what I specifically did
+        - Result                # outcome, ideally quantified
+      Self_Positioning:
+        - Quantified_Claim      # number-anchored achievement
+        - Bridge_Past_Role      # past experience → target role connection
+        - Skill_Demonstration   # concrete proof of capability
+        - Limitation_Frame      # weakness-question handling
+      Closing:
+        - Wrap_Pivot            # tidy current answer + invite follow-up
+        - Forward_Looking       # post-hire contribution intent
+
+  # ------------------------------------------------------------------
+  # V. Epistemic & Register — tone calibration
+  # ------------------------------------------------------------------
+  V_epistemic_register:
+    display_name: "V. 인식 & 레지스터"
+    rationale: "Calibration. Overconfident = arrogant. Overhedged = incompetent. Right calibration = 'knows what they're talking about, collaborative'."
+    groups:
+      Certainty:
+        - Confident_Direct      # "I'm confident that..."
+        - Measured              # "Based on my experience..."
+        - Hedged                # "It seems / I would say"
+        - Probabilistic         # "There's a good chance..."
+      Register:
+        - Corporate_Formal      # "I would argue / I believe it would be prudent..."
+        - Conversational        # "Honestly, I think..."
+        - Technical_Precise     # accurate jargon, no over-explanation
+        - Story_Casual          # narrative storytelling tone
+      Stance:
+        - First_Person_Strong   # "I led / I decided / I built"
+        - Team_Attribution      # "We achieved / The team..."
+        - Observer              # "I noticed / I saw"
+
+# ------------------------------------------------------------------
+# Suggested-tag promotion log (managed by `identity-corpus tags promote`).
+# Operator decisions append here so taxonomy evolution is auditable.
+# ------------------------------------------------------------------
+promoted_tags: []
