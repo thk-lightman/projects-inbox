@@ -159,19 +159,47 @@ def test_split_by_headings_preamble_before_first_heading_is_its_own_chunk():
     assert chunks[1] == (["First"], "## First\nbody\n")
 
 
-def test_split_by_headings_h1_and_h4_not_boundaries():
+def test_split_by_headings_adaptive_depth_h1_through_h4_all_boundary():
+    """Per-note adaptive depth: when the deepest level is h4, h1/h2/h4 all
+    act as boundaries (h3 absent so no boundary appears at that level)."""
     body = (
         "# Title H1\n"
         "intro under h1\n"
         "## Real\n"
         "real body\n"
         "#### Deep\n"
-        "deep body still in real\n"
+        "deep body inside real\n"
     )
     chunks = split_by_headings(body)
-    assert [c[0] for c in chunks] == [[], ["Real"]]
+    assert [c[0] for c in chunks] == [
+        ["Title H1"],
+        ["Title H1", "Real"],
+        ["Title H1", "Real", "Deep"],
+    ]
     assert chunks[0][1] == "# Title H1\nintro under h1\n"
-    assert "#### Deep" in chunks[1][1]
+    assert chunks[1][1] == "## Real\nreal body\n"
+    assert chunks[2][1] == "#### Deep\ndeep body inside real\n"
+
+
+def test_split_by_headings_max_level_capped_at_h4_so_h5_stays_in_body():
+    """``#####`` and beyond are body content. Hard cap at h4."""
+    body = (
+        "## Real\n"
+        "real body\n"
+        "##### way too deep\n"
+        "deep prose\n"
+    )
+    chunks = split_by_headings(body)
+    assert [c[0] for c in chunks] == [["Real"]]
+    assert "##### way too deep" in chunks[0][1]
+
+
+def test_split_by_headings_depth_clamps_per_note_when_only_h2_present():
+    """Note whose deepest level is h2 splits only at h2 even though the
+    regex would accept deeper headings if they appeared."""
+    body = "## A\nbody a\n## B\nbody b\n"
+    chunks = split_by_headings(body)
+    assert [c[0] for c in chunks] == [["A"], ["B"]]
 
 
 def test_split_by_headings_leading_h3_without_parent_h2():

@@ -1,7 +1,9 @@
 """Chunking utilities for vault notes.
 
-Parses YAML front-matter and splits a note body into ``##``-bounded chunks
-(with ``###`` tracked as nested headings inside the parent ``##`` section).
+Parses YAML front-matter and splits a note body into heading-bounded chunks
+using a per-note adaptive depth: every heading at any level ``1..max_level``
+acts as a boundary, where ``max_level`` is the deepest level present in the
+note (capped at ``####``; ``#####`` and beyond stay as body content).
 """
 
 from __future__ import annotations
@@ -19,8 +21,13 @@ _FRONTMATTER_DELIM = "---"
 # Fenced code block opener/closer: 3+ backticks or tildes, optional info string.
 _FENCE_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 
-# ``##`` or ``###`` heading (not ``#`` h1, not ``####``+). Optional trailing ``#``s.
-_HEADING_RE = re.compile(r"^(#{2,3})\s+(.+?)\s*#*\s*$")
+# ATX heading at level 1, 2, 3, or 4. Hard cap at 4 — levels 5+ stay as body
+# content. Optional trailing ``#``s in the title line are stripped from the
+# captured title. The regex requires at least one whitespace between the
+# hash run and the title text, so a 5-hash line like ``##### x`` does not
+# match (the regex cannot consume any prefix of 1-4 hashes followed by a
+# whitespace when the next char is ``#``).
+_HEADING_RE = re.compile(r"^(#{1,4})\s+(.+?)\s*#*\s*$")
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -65,27 +72,34 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def split_by_headings(body: str) -> list[tuple[list[str], str]]:
-    """Split a note body into ``##``-bounded chunks.
+    """Split a note body into heading-bounded chunks (all-levels-up-to-deepest).
 
     Returns an ordered list of ``(heading_chain, chunk_body)`` tuples.
 
-    Boundary rules:
+    Boundary rules (per-note adaptive depth):
 
-    * Only ``##`` and ``###`` ATX headings act as boundaries. ``#`` (h1) and
-      ``####``+ are treated as plain body content.
-    * A ``##`` heading opens a new top-level chunk; ``heading_chain`` becomes
-      ``[h2_title]``.
-    * A ``###`` heading opens a nested chunk; ``heading_chain`` becomes
-      ``[current_h2_title, h3_title]``. A leading ``###`` with no preceding
-      ``##`` yields ``[h3_title]``.
+    * Per-note ``max_level`` is the deepest heading level present among
+      ``#``, ``##``, ``###``, ``####``. Levels 5+ (``#####`` and beyond)
+      are never boundaries — they stay as body content. This is the hard
+      cap referenced in the seed.
+    * Every heading at any level ``1..max_level`` acts as a boundary. A
+      note whose deepest heading is ``##`` splits only at ``##``; a note
+      that mixes ``#`` and ``####`` splits at both (and at any ``##``/``###``
+      present in between). This makes chunk granularity track the note's
+      own structural depth rather than a fixed level.
+    * ``heading_chain`` accumulates ancestry. When a heading of level L
+      appears, the chain is composed of the most recent heading at every
+      level ``1..L`` that exists. Absent ancestor levels are skipped (e.g.
+      a ``###`` with no preceding ``##`` yields chain ``[h1_title, h3_title]``
+      when an ``#`` is in scope, or ``[h3_title]`` when no ``#`` exists).
     * Lines inside fenced code blocks (``` ``` ``` or ``~~~``) are never
       treated as headings.
-    * Content appearing before the first heading becomes a leading chunk with
-      an empty ``heading_chain`` (skipped when that preamble is whitespace
-      only).
-    * A body with zero ``##``/``###`` headings returns a single
-      ``([], body)`` chunk so callers can always treat the note as at least
-      one chunk.
+    * Content appearing before the first heading becomes a leading chunk
+      with an empty ``heading_chain`` (skipped when that preamble is
+      whitespace only).
+    * A body with zero in-range headings (``#`` through ``####``) returns
+      a single ``([], body)`` chunk so callers can always treat the note
+      as at least one chunk.
     * Each chunk body includes its own heading line plus everything up to
       the next boundary, preserving original line terminators.
     """
@@ -111,6 +125,11 @@ def split_by_headings(body: str) -> list[tuple[list[str], str]]:
     if not boundaries:
         return [([], body)]
 
+    # Per-note adaptive depth: clip the boundary set to the deepest level
+    # actually present (which is already ≤ 4 thanks to the regex cap).
+    max_level = max(level for _, level, _ in boundaries)
+    boundaries = [b for b in boundaries if b[1] <= max_level]
+
     chunks: list[tuple[list[str], str]] = []
 
     first_idx = boundaries[0][0]
@@ -119,15 +138,17 @@ def split_by_headings(body: str) -> list[tuple[list[str], str]]:
         if preamble.strip():
             chunks.append(([], preamble))
 
-    current_h2: str | None = None
+    # Track the most recent heading title seen at each level. None = absent.
+    # Lower-level ancestors are kept when a deeper heading opens; higher
+    # (deeper-than-current) entries reset so a new section starts fresh.
+    current: dict[int, str | None] = {1: None, 2: None, 3: None, 4: None}
     for j, (idx, level, title) in enumerate(boundaries):
         end = boundaries[j + 1][0] if j + 1 < len(boundaries) else len(lines)
         chunk_body = "".join(lines[idx:end])
-        if level == 2:
-            current_h2 = title
-            chain = [title]
-        else:
-            chain = [current_h2, title] if current_h2 else [title]
+        current[level] = title
+        for deeper in range(level + 1, 5):
+            current[deeper] = None
+        chain = [current[lvl] for lvl in range(1, level + 1) if current[lvl] is not None]
         chunks.append((chain, chunk_body))
 
     return chunks
