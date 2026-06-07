@@ -45,12 +45,12 @@ constraints:
   - Pragmatic tagger uses an OpenAI chat model (default gpt-4o-mini) and runs one call per cluster (not per sentence). The taxonomy.yaml is the source of truth for known tags; the LLM may emit "suggested_new_tags" which land in a separate column for operator review
   - Vector store is SQLite (single file). The sentences table carries an embedding BLOB and chunk_id-equivalent sentence_id (content-derived hash) so a future pgvector migration needs no re-embedding
   - Cluster threshold (cosine similarity for attach-vs-new-cluster) is configurable; default 0.78 (the threshold the abandoned util-englishIdentity converged on after manual tuning)
-  - Sentence-tokenizer rules are language-aware: Korean sentences require ≥ 5 Hangul characters; English sentences require ≥ 20 alphabetic characters. Code blocks and Obsidian wikilinks are stripped before tokenization. These thresholds match the util-englishIdentity heuristics that the operator already validated against their own writing style
+  - "Sentence-tokenizer rules are language-aware — Korean sentences require ≥ 5 Hangul characters; English sentences require ≥ 20 alphabetic characters. Code blocks and Obsidian wikilinks are stripped before tokenization. These thresholds match the util-englishIdentity heuristics that the operator already validated against their own writing style"
   - All non-trivial OpenAI integration points (embed, translate, label) must be independently testable via injected client objects and documented in the README's "API Integration" section with a runnable ≤ 15-line snippet per touchpoint
   - Secrets (OpenAI API key) loaded from environment variables only; never hardcoded, never committed
-  - No external dependencies beyond vault-corpus's transitive set plus a sentence-tokenizer library (default: a small in-house regex tokenizer; allowed alternative: `kss` for Korean). No Docker, no daemons, no web UI
+  - "No external dependencies beyond vault-corpus's transitive set plus a sentence-tokenizer library (default = a small in-house regex tokenizer; allowed alternative = `kss` for Korean). No Docker, no daemons, no web UI"
   - No Anki sync, no Google Sheets sync, no chat UI, no MCP server. Those are explicit non-goals for v1 — the abandoned util-englishIdentity tried to bundle sync surfaces and it inflated scope. v1 ends at a queryable sentence bank + a regenerated voice_profile.md
-  - Review state machine has exactly three states per sentence: `draft` (auto-extracted, not human-reviewed), `locked` (human-reviewed, promoted to voice_profile inclusion), `archived` (human-rejected, never re-surfaces). No other states. State transitions happen ONLY via the `identity-corpus review import` command consuming an edited TSV — never silently
+  - "Review state machine has exactly three states per sentence — `draft` (auto-extracted, not human-reviewed), `locked` (human-reviewed, promoted to voice_profile inclusion), `archived` (human-rejected, never re-surfaces). No other states. State transitions happen ONLY via the `identity-corpus review import` command consuming an edited TSV — never silently"
 
 acceptance_criteria:
   - |

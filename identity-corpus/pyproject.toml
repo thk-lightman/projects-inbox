@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "identity-corpus"
+version = "0.1.0"
+description = "Derive a deduplicated sentence bank and regenerable voice_profile.md from curated KR-self / EN-ref identity notes."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "mori" }]
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.12.0",
+    "pyyaml>=6.0",
+    "openai>=1.40.0",
+    "tqdm>=4.66.0",
+    "gspread>=6.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
+
+[project.scripts]
+identity-corpus = "identity_corpus.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/identity_corpus"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]

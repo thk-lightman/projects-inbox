@@ -1,6 +1,6 @@
 # Hybrid pragmatic taxonomy for identity-corpus.
 #
-# 5 axes × 58 leaves total. Hierarchical 3-level structure (axis > mid > leaf).
+# 5 axes × 61 leaves total. Hierarchical 3-level structure (axis > mid > leaf).
 # Each cluster receives at most one leaf per axis (or null when not applicable).
 #
 # Axes I/II/III are the operator's pre-existing taxonomy carried forward intact.
@@ -77,7 +77,7 @@ axes:
       Reporting:
         - Statement
         - Reasoning
-        - Agreement
+        - Agreement             # 동의 OR 반대 — 입장표명 한 슬롯 ("I agree" / "I see it differently")
       Conclusion:
         - Wrap
         - Bottom_line
@@ -86,8 +86,8 @@ axes:
   # IV. Interview Moves — genre-specific to high-stakes Q&A
   # ------------------------------------------------------------------
   IV_interview_moves:
-    display_name: "IV. 면접 무브"
-    rationale: "Genre-specific moves native interviewers expect. Missing these = 'doesn't fit corporate culture' / 'sounds essay-like, not interview-like'."
+    display_name: "IV. 면접·발표 무브"
+    rationale: "Genre-specific moves native interviewers expect. Missing these = 'doesn't fit corporate culture' / 'sounds essay-like, not interview-like'. Audience_Engagement added for lecture/presentation register (en-ref source)."
     groups:
       Opening:
         - Elevator_Pitch        # 10–30s self-intro
@@ -110,6 +110,10 @@ axes:
       Closing:
         - Wrap_Pivot            # tidy current answer + invite follow-up
         - Forward_Looking       # post-hire contribution intent
+      Audience_Engagement:      # lecture/presentation delivery (en-ref source)
+        - Rhetorical_Question   # pose Q to audience ("So what does this mean?")
+        - Direct_Address        # speak to listener ("Now notice...", "You'll see")
+        - Emphasis_Highlight    # flag key point ("The crucial thing here is...")
 
   # ------------------------------------------------------------------
   # V. Epistemic & Register — tone calibration
