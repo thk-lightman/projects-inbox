@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_bg_safe">#1F1F28</color>
+    <color name="widget_bg_warn">#3A2F12</color>
+    <color name="widget_bg_danger">#3A1414</color>
+    <color name="widget_border_safe">#26262F</color>
+    <color name="widget_border_warn">#7A6322</color>
+    <color name="widget_border_danger">#7A2A2A</color>
+    <color name="text_primary">#E5E7EB</color>
+    <color name="text_muted">#9CA3AF</color>
+    <color name="text_warn">#FBBF24</color>
+    <color name="text_danger">#FECACA</color>
+</resources>
