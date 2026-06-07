@@ -1,4 +1,3 @@
 gspread==6.1.4
-pandas==2.2.3
-python-dotenv==1.0.1
+# optional — only if you attach an LLM step via transforms.llm_map
 google-generativeai==0.8.4

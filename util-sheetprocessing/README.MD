@@ -125,35 +125,34 @@ mv ~/Downloads/*.json \
 
 ---
 
-## Step 5. .env 파일 작성
+## Step 5. 실행 (레고 조립)
+
+설정 프레임워크 없음 — 값은 인자로 넘긴다. 척추(read/write) + 옵션 transform 블록.
+
+### 흔한 경우: 그룹 병합만 (LLM 없음)
 
 ```bash
-cp .env.example .env
-```
-
-`.env` 파일을 열어 실제 값으로 수정:
-
-```dotenv
-GCP_SERVICE_ACCOUNT_FILE=./credentials/service_account.json
-SHEET_NAME=실제_구글_시트_문서_제목
-INPUT_WORKSHEET=실제_입력_탭_이름
-OUTPUT_WORKSHEET=Output_Data
-GEMINI_API_KEY=발급받은_API_키
-LLM_MODEL=gemini-2.5-flash
-GROUP_COLUMN=실제_그룹핑_컬럼명
-TEXT_COLUMN=실제_텍스트_컬럼명
-API_DELAY_SECONDS=1.0
-```
-
----
-
-## Step 6. 실행
-
-```bash
-cd /Users/mori/GIT/forMori/project-mori/util-sheetprocessing
+cd /Users/mori/GIT/project-mori/util-sheetprocessing
 source .venv/bin/activate
-python pipeline.py
+python run.py --sa credentials/service_account.json --sheet 실제_시트_제목 \
+    --in 입력탭 --out 출력탭 --group-col Group_ID --text-col Raw_Text
 ```
+
+### LLM 등 특정 기능 붙이기: 자기 스크립트로 조립
+
+```python
+from sheet_io import auth, read_sheet, write_sheet
+from transforms import group_merge, llm_map
+
+client = auth("credentials/service_account.json")
+rows = read_sheet(client, "실제_시트_제목", "입력탭")
+merged = group_merge(rows, "Group_ID", "Raw_Text")
+out = llm_map(merged, my_classifier)          # my_classifier(text)->dict, provider 무관
+write_sheet(client, "실제_시트_제목", "출력탭", out, mode="overwrite")
+```
+
+`llm_map`은 provider 무관 — Gemini/OpenAI/정규식 등 어떤 `fn(text)->dict`든 받는다.
+시크릿(API 키)이 필요하면 환경변수로 읽어 `my_classifier` 안에서 쓴다.
 
 ---
 
@@ -169,9 +168,8 @@ python pipeline.py
 - [x] Step 2-5 — JSON 키 파일 생성
 - [x] Step 2-6 — 서비스 계정 이메일 확인
 - [x] Step 3 — 구글 시트에 서비스 계정 이메일 공유
-- [ ] Step 4 — Gemini API 키 발급
-- [ ] Step 5 — .env 파일 작성
-- [ ] Step 6 — `python pipeline.py` 실행
+- [ ] Step 4 — Gemini API 키 발급 (LLM 단계 붙일 때만)
+- [ ] Step 5 — `python run.py ...` 실행 (또는 자기 스크립트로 조립)
 
 
 ---
@@ -180,14 +178,12 @@ python pipeline.py
 
 ```
 util-sheetprocessing/
-├── .env.example          ← 환경변수 템플릿
-├── .env                  ← 실제 비밀 값 (git 제외)
-├── .gitignore
 ├── credentials/
 │   └── service_account.json  ← GCP 서비스 계정 키 (git 제외)
-├── config.py             ← .env 로더
-├── pipeline.py           ← 메인 파이프라인 (Extract → Transform → Load)
+├── sheet_io.py           ← 재사용 척추: auth / read_sheet / write_sheet
+├── transforms.py         ← 옵션 블록(rows→rows): group_merge / llm_map
+├── run.py                ← 얇은 조립 CLI (read→group_merge→write)
 ├── requirements.txt
-└── SETUP_GUIDE.md        ← 이 문서
+└── README.MD             ← 이 문서
 ```
 
