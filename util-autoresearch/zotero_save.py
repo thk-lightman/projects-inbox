@@ -34,8 +34,7 @@ import yaml
 try:
     from pyzotero import zotero
 except ImportError:
-    print("ERROR: pyzotero not installed. pip install pyzotero>=1.5", file=sys.stderr)
-    sys.exit(2)
+    zotero = None  # resolved lazily in push_to_zotero; import must stay side-effect-free
 
 
 # --------------------------- Frontmatter helpers ---------------------------
@@ -140,6 +139,10 @@ def push_to_zotero(vault_md_path: Path, *,
 
     if fm.get("zotero_key"):
         return {"status": "skipped", "reason": "already has zotero_key", "key": fm["zotero_key"]}
+
+    if zotero is None:
+        print("ERROR: pyzotero not installed. pip install pyzotero>=1.5", file=sys.stderr)
+        sys.exit(2)
 
     zot = zotero.Zotero(user_id, "user", api_key)
     item = build_zotero_item(fm)
