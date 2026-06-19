@@ -33,9 +33,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_VAULT = Path(os.environ.get("VAULT_ROOT", str(Path.home() / "Obsidian/Obsidian_Master_v2")))
-DEFAULT_WATCHLIST_LABS = DEFAULT_VAULT / "01 Command Center/prod-autoresearch/docs-watchlist-labs.md"
-DEFAULT_WATCHLIST_JOURNALS = DEFAULT_VAULT / "01 Command Center/prod-autoresearch/docs-watchlist-journals.md"
-DEFAULT_INBOX_DIR = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto"
+DEFAULT_WATCHLIST_LABS = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-labs.md"
+DEFAULT_WATCHLIST_JOURNALS = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md"
+DEFAULT_INBOX_DIR = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/raws"
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 DEFAULT_CITATION_MIN = 20
@@ -380,9 +380,11 @@ def matches_author_position(paper: Paper, pi_name: str, position: str) -> bool:
 # --------------------------- Frontmatter writer ----------------------------
 
 def write_paper_md(paper: Paper, inbox_dir: Path, *, dry_run: bool = False) -> Path:
-    """Write or dry-run paper-<canonical-id>.md to inbox_dir. Returns path."""
+    """Write or dry-run paper-W<isoweek>-<title-slug>.md to inbox_dir. Returns path."""
     canonical = paper.canonical_id()
-    target = inbox_dir / f"paper-{canonical}.md"
+    week_short = "W" + datetime.now().strftime("%V")
+    title_slug = re.sub(r"[^a-z0-9]+", "-", paper.title.lower())[:60].strip("-") or canonical
+    target = inbox_dir / f"paper-{week_short}-{title_slug}.md"
     if target.exists():
         return target  # idempotent — leave existing alone
     body = _render_paper_md(paper)

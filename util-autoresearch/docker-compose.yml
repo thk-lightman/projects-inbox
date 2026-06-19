@@ -10,11 +10,11 @@ services:
       - OPENALEX_EMAIL=${OPENALEX_EMAIL:-}
     command:
       - --watchlist-labs
-      - /vault/01 Command Center/prod-autoresearch/docs-watchlist-labs.md
+      - /vault/00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-labs.md
       - --watchlist-journals
-      - /vault/01 Command Center/prod-autoresearch/docs-watchlist-journals.md
+      - /vault/00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md
       - --inbox-dir
-      - /vault/00 Get Things Done/03Inbox/auto
+      - /vault/00 Get Things Done/03Inbox/auto-research/raws
       - --dedup-db
       - /cache/dedup.sqlite
 

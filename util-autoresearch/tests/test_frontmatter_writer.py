@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -26,7 +27,7 @@ def test_write_paper_md_creates_file_with_required_frontmatter_keys():
     with tempfile.TemporaryDirectory() as td:
         out = write_paper_md(p, Path(td))
         body = out.read_text(encoding="utf-8")
-    assert out.name == "paper-10-1234-abc-def.md"
+    assert re.fullmatch(r"paper-W\d{2}-bayesian-causal-forests\.md", out.name), out.name
     assert "source: arxiv-paper" in body
     assert "title:" in body
     assert "authors:" in body

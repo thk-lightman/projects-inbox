@@ -59,8 +59,10 @@ def test_pipeline_dedup_collapses_cross_api_dup():
         finally:
             dedup.close()
         files = sorted(p.name for p in inbox.glob("paper-*.md"))
-    # 2 distinct canonical_ids (10.1/a + 10.2/b); s2 dup of 10.1/a deduped
-    assert files == ["paper-10-1-a.md", "paper-10-2-b.md"], files
+    # 2 distinct canonical_ids (10.1/a + 10.2/b); s2 dup of 10.1/a deduped.
+    # Filename is now paper-W<isoweek>-<title-slug>.md per 2026-06-10 change.
+    assert len(files) == 2, files
+    assert all(f.startswith("paper-W") and f.endswith(".md") for f in files), files
     assert counts["new_written"] == 2
     assert counts["seen_total"] == 3  # openalex(2) + s2(1)
 
