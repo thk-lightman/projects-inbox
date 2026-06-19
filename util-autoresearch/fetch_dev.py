@@ -35,9 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_VAULT = Path(os.environ.get("VAULT_ROOT", str(Path.home() / "Obsidian/Obsidian_Master_v2")))
-DEFAULT_WATCHLIST_TOPICS = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-topics.md"
-DEFAULT_BRIEFINGS_DIR = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/briefings"
-DEFAULT_SCRAP_FILE = DEFAULT_VAULT / "00 Get Things Done/03Inbox/01Inbox-scrap.md"
+# Vault-relative paths; override per-file via AR_DEV_* env (see .env.example).
+DEFAULT_WATCHLIST_TOPICS = DEFAULT_VAULT / (os.environ.get("AR_DEV_WATCHLIST_TOPICS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-topics.md")
+DEFAULT_BRIEFINGS_DIR = DEFAULT_VAULT / (os.environ.get("AR_DEV_BRIEFINGS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/briefings")
+DEFAULT_SCRAP_FILE = DEFAULT_VAULT / (os.environ.get("AR_DEV_SCRAP_REL")
+    or "00 Get Things Done/03Inbox/01Inbox-scrap.md")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 DEFAULT_DAYS = 7
 

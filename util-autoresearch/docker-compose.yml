@@ -8,13 +8,11 @@ services:
     environment:
       - VAULT_ROOT=/vault
       - OPENALEX_EMAIL=${OPENALEX_EMAIL:-}
+      # Vault-relative path overrides; unset → script defaults (see .env.example).
+      - AR_PAPER_WATCHLIST_LABS_REL=${AR_PAPER_WATCHLIST_LABS_REL:-}
+      - AR_PAPER_WATCHLIST_JOURNALS_REL=${AR_PAPER_WATCHLIST_JOURNALS_REL:-}
+      - AR_PAPER_INBOX_REL=${AR_PAPER_INBOX_REL:-}
     command:
-      - --watchlist-labs
-      - /vault/00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-labs.md
-      - --watchlist-journals
-      - /vault/00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md
-      - --inbox-dir
-      - /vault/00 Get Things Done/03Inbox/auto-research/raws
       - --dedup-db
       - /cache/dedup.sqlite
 

@@ -33,9 +33,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_VAULT = Path(os.environ.get("VAULT_ROOT", str(Path.home() / "Obsidian/Obsidian_Master_v2")))
-DEFAULT_WATCHLIST_LABS = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-labs.md"
-DEFAULT_WATCHLIST_JOURNALS = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md"
-DEFAULT_INBOX_DIR = DEFAULT_VAULT / "00 Get Things Done/03Inbox/auto-research/raws"
+# Vault-relative paths; override per-file via AR_PAPER_* env (see .env.example).
+DEFAULT_WATCHLIST_LABS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST_LABS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-labs.md")
+DEFAULT_WATCHLIST_JOURNALS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST_JOURNALS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md")
+DEFAULT_INBOX_DIR = DEFAULT_VAULT / (os.environ.get("AR_PAPER_INBOX_REL")
+    or "00 Get Things Done/03Inbox/auto-research/raws")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 DEFAULT_CITATION_MIN = 20
