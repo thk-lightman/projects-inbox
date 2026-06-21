@@ -40,6 +40,8 @@ DEFAULT_WATCHLIST_JOURNALS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST
     or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-journals.md")
 DEFAULT_INBOX_DIR = DEFAULT_VAULT / (os.environ.get("AR_PAPER_INBOX_REL")
     or "00 Get Things Done/03Inbox/auto-research/raws")
+DEFAULT_WATCHLIST_TOPICS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST_TOPICS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-paper-topics.md")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 DEFAULT_CITATION_MIN = 20
@@ -88,6 +90,30 @@ class JournalRow:
         return self.lookback_months or DEFAULT_LOOKBACK_MONTHS
 
 
+TOPIC_STRATEGIES = ("classic", "recent", "keyword")
+
+
+@dataclass
+class TopicRow:
+    """A keyword-driven fetch target. strategy picks the OpenAlex sort/filter."""
+    topic: str
+    strategy: str = "keyword"  # classic | recent | keyword
+    query: str = ""            # search term; falls back to topic when empty
+    citation_min: int = 0
+    status: str = "active"
+    note: str = ""
+
+    def slug(self) -> str:
+        s = re.sub(r"[^a-z0-9]+", "-", self.topic.strip().lower()).strip("-")
+        return s or "topic"
+
+    def effective_query(self) -> str:
+        return self.query or self.topic
+
+    def effective_citation_min(self) -> int:
+        return self.citation_min or DEFAULT_CITATION_MIN
+
+
 @dataclass
 class Paper:
     title: str
@@ -123,6 +149,7 @@ def _normalize_doi(doi: str) -> str:
 
 WATCHLIST_TABLE_HEADER_LABS_KEYS = ("PI 이름", "OpenAlex authorId", "S2 authorId")
 WATCHLIST_TABLE_HEADER_JOURNALS_KEYS = ("저널", "OpenAlex source id", "S2 venue 이름")
+WATCHLIST_TABLE_HEADER_TOPICS_KEYS = ("주제", "전략", "쿼리")
 
 
 def parse_labs_watchlist(text: str) -> list[LabRow]:
@@ -157,6 +184,30 @@ def parse_journals_watchlist(text: str) -> list[JournalRow]:
             citation_min=_parse_int(cells.get("citation_min", "")),
             lookback_months=_parse_int(cells.get("lookback_months", "")),
             field_tag=cells.get("분야", "").strip().strip("_"),
+            note=cells.get("메모", "").strip().strip("_"),
+        ))
+    return rows
+
+
+def parse_paper_topics_watchlist(text: str) -> list[TopicRow]:
+    """Extract active TopicRow entries from a paper-topics markdown watchlist."""
+    rows: list[TopicRow] = []
+    for cells in _iter_markdown_table_rows(text, WATCHLIST_TABLE_HEADER_TOPICS_KEYS):
+        topic = cells.get("주제", "").strip().strip("_")
+        if not topic or topic.startswith("예:") or "_예:" in topic:
+            continue
+        status = (cells.get("status", "").strip().strip("_") or "active").lower()
+        if status != "active":
+            continue
+        strategy = (cells.get("전략", "").strip().strip("_") or "keyword").lower()
+        if strategy not in TOPIC_STRATEGIES:
+            strategy = "keyword"
+        rows.append(TopicRow(
+            topic=topic,
+            strategy=strategy,
+            query=cells.get("쿼리", "").strip().strip("_"),
+            citation_min=_parse_int(cells.get("citation_min", "")),
+            status=status,
             note=cells.get("메모", "").strip().strip("_"),
         ))
     return rows

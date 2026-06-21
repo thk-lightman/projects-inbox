@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from fetch_papers import parse_journals_watchlist, parse_labs_watchlist  # noqa: E402
+from fetch_papers import (parse_journals_watchlist, parse_labs_watchlist,  # noqa: E402
+                          parse_paper_topics_watchlist)
 
 
 LABS_FIXTURE = """---
@@ -33,6 +34,38 @@ JOURNALS_FIXTURE = """| 저널·컨퍼런스 | OpenAlex source id | S2 venue 이
 | NeurIPS | S203510302 | NeurIPS | 50 | 12 | ML | proceedings |
 | JASA | S148538149 | Journal of the American Statistical Association | 15 | 24 | stat |  |
 """
+
+
+TOPICS_FIXTURE = """## 표
+
+| 주제 | 전략 | 쿼리 | citation_min | status | 메모 |
+|---|---|---|---|---|---|
+| _예: causal inference_ | _keyword_ | _causal_ | _20_ | _active_ | _ex_ |
+| bayesian forecasting | classic | bayesian hierarchical forecasting | 100 | active | foundational |
+| diffusion models | recent |  | 0 | active | newest only |
+| inactive topic | keyword | x | 0 | paused | skip me |
+| bad strategy | nonsense | q | 0 | active |  |
+"""
+
+
+def test_topics_parser_skips_example_and_inactive():
+    rows = parse_paper_topics_watchlist(TOPICS_FIXTURE)
+    topics = [r.topic for r in rows]
+    assert topics == ["bayesian forecasting", "diffusion models", "bad strategy"], topics
+
+
+def test_topics_parser_fields_and_strategy_normalization():
+    rows = parse_paper_topics_watchlist(TOPICS_FIXTURE)
+    by_topic = {r.topic: r for r in rows}
+    assert by_topic["bayesian forecasting"].strategy == "classic"
+    assert by_topic["bayesian forecasting"].query == "bayesian hierarchical forecasting"
+    assert by_topic["bayesian forecasting"].citation_min == 100
+    # empty query falls back to topic
+    assert by_topic["diffusion models"].effective_query() == "diffusion models"
+    assert by_topic["diffusion models"].strategy == "recent"
+    # unknown strategy normalizes to keyword
+    assert by_topic["bad strategy"].strategy == "keyword"
+    assert by_topic["bayesian forecasting"].slug() == "bayesian-forecasting"
 
 
 def test_labs_parser_skips_example_row():
