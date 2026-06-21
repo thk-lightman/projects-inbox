@@ -538,6 +538,43 @@ def _yaml_escape(s: str) -> str:
     return s
 
 
+def push_written_to_zotero(written: list[WrittenPaper], *, dry_run: bool = False) -> int:
+    """Best-effort Zotero push at collection time; sets w.zotero_key on success.
+
+    No-op (returns 0) when run dry, when ZOTERO_API_KEY/USER_ID are unset, or
+    when pyzotero is unavailable — the fetch must never fail because Zotero is
+    not configured. Returns the number of papers pushed."""
+    if dry_run or not written:
+        return 0
+    api_key = os.environ.get("ZOTERO_API_KEY")
+    user_id = os.environ.get("ZOTERO_USER_ID")
+    if not (api_key and user_id):
+        print("zotero: ZOTERO_API_KEY/USER_ID unset; skipping push.", file=sys.stderr)
+        return 0
+    try:
+        import zotero_save
+    except Exception as e:  # import-time failure must not kill the fetch
+        print(f"zotero: import failed ({e}); skipping push.", file=sys.stderr)
+        return 0
+    if zotero_save.zotero is None:  # pre-check so push_to_zotero never sys.exits
+        print("zotero: pyzotero not installed; skipping push.", file=sys.stderr)
+        return 0
+    collection = os.environ.get("ZOTERO_COLLECTION") or None
+    pushed = 0
+    for w in written:
+        try:
+            result = zotero_save.push_to_zotero(
+                w.path, api_key=api_key, user_id=user_id, collection=collection)
+        except Exception as e:  # one paper's failure must not abort the rest
+            print(f"zotero: push failed for {w.path.name}: {e}", file=sys.stderr)
+            continue
+        key = result.get("key")
+        if key:
+            w.zotero_key = key
+            pushed += 1
+    return pushed
+
+
 def _bucket_slug(bucket: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", bucket.strip().lower()).strip("-")
     return s or "misc"
@@ -772,9 +809,10 @@ def main() -> int:
     finally:
         dedup.close()
 
-    linked = briefed = 0
+    linked = briefed = pushed = 0
     if not args.dry_run:
         now = datetime.now()
+        pushed = push_written_to_zotero(counts["written"])  # before link list → keys populate
         linked = append_links_to_paper_inbox(
             counts["written"],
             inbox_file=Path(args.inbox_list),
@@ -790,7 +828,7 @@ def main() -> int:
     print(f"OK. seen={counts['seen_total']} new={counts['new_written']} "
           f"openalex={counts['by_source'].get('openalex', 0)} "
           f"s2={counts['by_source'].get('s2', 0)} "
-          f"linked={linked} briefed={briefed} dry_run={args.dry_run}")
+          f"zotero={pushed} linked={linked} briefed={briefed} dry_run={args.dry_run}")
     return 0
 
 
