@@ -42,6 +42,8 @@ DEFAULT_INBOX_DIR = DEFAULT_VAULT / (os.environ.get("AR_PAPER_INBOX_REL")
     or "00 Get Things Done/03Inbox/auto-research/raws")
 DEFAULT_WATCHLIST_TOPICS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST_TOPICS_REL")
     or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-paper-topics.md")
+DEFAULT_INBOX_LIST = DEFAULT_VAULT / (os.environ.get("AR_PAPER_INBOX_LIST_REL")
+    or "00 Get Things Done/03Inbox/01Inbox-paper.md")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 DEFAULT_CITATION_MIN = 20
@@ -126,6 +128,14 @@ class Paper:
     citation_count: int = 0
     raw_source: str = ""  # "openalex" or "s2"
 
+    def url(self) -> str:
+        """Best stable URL: DOI resolver, else arXiv abstract page."""
+        if self.doi:
+            return f"https://doi.org/{self.doi}"
+        if self.arxiv_id:
+            return f"https://arxiv.org/abs/{self.arxiv_id}"
+        return ""
+
     def canonical_id(self) -> str:
         """DOI → arXiv id → title+first-author hash."""
         if self.doi:
@@ -143,6 +153,15 @@ def _normalize_doi(doi: str) -> str:
     d = doi.strip().lower()
     d = d.replace("https://doi.org/", "").replace("doi:", "")
     return re.sub(r"[^a-z0-9]+", "-", d).strip("-")
+
+
+@dataclass
+class WrittenPaper:
+    """A paper newly written this run, tagged with its origin bucket."""
+    paper: Paper
+    path: Path
+    bucket: str           # e.g. "topic/<slug>", "pi/<name>", "venue/<name>"
+    zotero_key: str = ""  # filled when the zotero push step runs
 
 
 # --------------------------- Watchlist parser ------------------------------
@@ -517,6 +536,37 @@ def _yaml_escape(s: str) -> str:
     return s
 
 
+def append_links_to_paper_inbox(written: list[WrittenPaper], *,
+                                 inbox_file: Path, today_yyyymmdd: str) -> int:
+    """Append one line per newly-written paper to 01Inbox-paper.md (paper-absorb
+    input), mirroring the dev scrap line format:
+
+        - YYYYMMDD - [auto-research-paper/<bucket>] <title> <url> (zotero:<KEY>)
+
+    A paper whose url (or title, when url is empty) already appears is skipped.
+    Returns the number of lines appended."""
+    if not written:
+        return 0
+    inbox_file.parent.mkdir(parents=True, exist_ok=True)
+    existing = inbox_file.read_text(encoding="utf-8") if inbox_file.is_file() else ""
+    new_lines: list[str] = []
+    for w in written:
+        url = w.paper.url()
+        dedup_key = url or w.paper.title
+        if dedup_key and dedup_key in existing:
+            continue
+        zot = f" (zotero:{w.zotero_key})" if w.zotero_key else ""
+        new_lines.append(
+            f"- {today_yyyymmdd} - [auto-research-paper/{w.bucket}] "
+            f"{w.paper.title} {url or '(no-url)'}{zot}")
+    if not new_lines:
+        return 0
+    sep = "" if (not existing or existing.endswith("\n")) else "\n"
+    with inbox_file.open("a", encoding="utf-8") as f:
+        f.write(sep + "\n".join(new_lines) + "\n")
+    return len(new_lines)
+
+
 # --------------------------- Pipeline orchestration ------------------------
 
 def run_pipeline(*,
@@ -533,6 +583,8 @@ def run_pipeline(*,
                  s2_venue=fetch_s2_venue_papers) -> dict:
     """Returns counts: {seen_total, new_written, by_source}."""
     counts = {"seen_total": 0, "new_written": 0, "by_source": {"openalex": 0, "s2": 0}}
+    written: list[WrittenPaper] = []
+    counts["written"] = written
 
     for topic in topics or []:
         try:
@@ -542,7 +594,8 @@ def run_pipeline(*,
             print(f"WARN openalex/topic:{topic.slug()}: {e}", file=sys.stderr)
             continue
         for paper in papers:
-            _maybe_write(paper, "openalex", inbox_dir, dedup, dry_run, counts)
+            _maybe_write(paper, "openalex", f"topic/{topic.slug()}",
+                         inbox_dir, dedup, dry_run, counts, written)
         _rate_sleep("openalex")
 
     for lab in labs:
@@ -560,7 +613,8 @@ def run_pipeline(*,
             for paper in papers:
                 if not matches_author_position(paper, lab.pi_name, lab.position_filter):
                     continue
-                _maybe_write(paper, src_label, inbox_dir, dedup, dry_run, counts)
+                _maybe_write(paper, src_label, f"pi/{lab.pi_name}",
+                             inbox_dir, dedup, dry_run, counts, written)
             _rate_sleep(src_label)
 
     for journal in journals:
@@ -577,23 +631,26 @@ def run_pipeline(*,
                 print(f"WARN {src_label}/{journal.venue_name}: {e}", file=sys.stderr)
                 continue
             for paper in papers:
-                _maybe_write(paper, src_label, inbox_dir, dedup, dry_run, counts)
+                _maybe_write(paper, src_label, f"venue/{journal.venue_name}",
+                             inbox_dir, dedup, dry_run, counts, written)
             _rate_sleep(src_label)
 
     return counts
 
 
-def _maybe_write(paper: Paper, src_label: str, inbox_dir: Path,
-                  dedup: DedupStore, dry_run: bool, counts: dict) -> None:
+def _maybe_write(paper: Paper, src_label: str, bucket: str, inbox_dir: Path,
+                  dedup: DedupStore, dry_run: bool, counts: dict,
+                  written: list[WrittenPaper]) -> None:
     canonical = paper.canonical_id()
     counts["seen_total"] += 1
     if dedup.has(canonical):
         return
-    write_paper_md(paper, inbox_dir, dry_run=dry_run)
+    path = write_paper_md(paper, inbox_dir, dry_run=dry_run)
     if not dry_run:
         dedup.mark(canonical, src_label, paper.title)
     counts["new_written"] += 1
     counts["by_source"][src_label] = counts["by_source"].get(src_label, 0) + 1
+    written.append(WrittenPaper(paper=paper, path=path, bucket=bucket))
 
 
 def _rate_sleep(src_label: str) -> None:
@@ -609,6 +666,7 @@ def main() -> int:
     ap.add_argument("--watchlist-journals", default=str(DEFAULT_WATCHLIST_JOURNALS))
     ap.add_argument("--watchlist-topics", default=str(DEFAULT_WATCHLIST_TOPICS))
     ap.add_argument("--inbox-dir", default=str(DEFAULT_INBOX_DIR))
+    ap.add_argument("--inbox-list", default=str(DEFAULT_INBOX_LIST))
     ap.add_argument("--dedup-db", default=str(DEFAULT_DEDUP_DB))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -643,10 +701,18 @@ def main() -> int:
     finally:
         dedup.close()
 
+    linked = 0
+    if not args.dry_run:
+        linked = append_links_to_paper_inbox(
+            counts["written"],
+            inbox_file=Path(args.inbox_list),
+            today_yyyymmdd=datetime.now().strftime("%Y%m%d"),
+        )
+
     print(f"OK. seen={counts['seen_total']} new={counts['new_written']} "
           f"openalex={counts['by_source'].get('openalex', 0)} "
           f"s2={counts['by_source'].get('s2', 0)} "
-          f"dry_run={args.dry_run}")
+          f"linked={linked} dry_run={args.dry_run}")
     return 0
 
 
