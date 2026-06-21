@@ -140,6 +140,10 @@ class DedupStore:
             "source TEXT, title TEXT, "
             "source_kind TEXT NOT NULL DEFAULT 'paper')"
         )
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(seen)")}
+        if "source_kind" not in cols:
+            self.conn.execute(
+                "ALTER TABLE seen ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'paper'")
         self.conn.commit()
 
     def has(self, canonical_id: str) -> bool:

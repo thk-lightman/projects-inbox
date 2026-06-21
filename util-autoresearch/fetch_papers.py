@@ -193,7 +193,14 @@ def _parse_int(s: str) -> int:
 # --------------------------- Dedup store -----------------------------------
 
 class DedupStore:
-    """sqlite-backed canonical_id → first-seen timestamp store."""
+    """sqlite-backed canonical_id store, shared with fetch_dev.py.
+
+    The `seen` table carries source_kind so paper rows and the dev layer's
+    article rows coexist in one db. Legacy column-less tables are migrated in
+    place so whichever layer opens the db first repairs the schema.
+    """
+
+    SOURCE_KIND = "paper"
 
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,8 +209,13 @@ class DedupStore:
             "CREATE TABLE IF NOT EXISTS seen ("
             "canonical_id TEXT PRIMARY KEY, "
             "first_seen TEXT NOT NULL, "
-            "source TEXT, title TEXT)"
+            "source TEXT, title TEXT, "
+            "source_kind TEXT NOT NULL DEFAULT 'paper')"
         )
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(seen)")}
+        if "source_kind" not in cols:
+            self.conn.execute(
+                "ALTER TABLE seen ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'paper'")
         self.conn.commit()
 
     def has(self, canonical_id: str) -> bool:
@@ -214,9 +226,11 @@ class DedupStore:
 
     def mark(self, canonical_id: str, source: str, title: str) -> None:
         self.conn.execute(
-            "INSERT OR IGNORE INTO seen(canonical_id, first_seen, source, title) "
-            "VALUES (?, ?, ?, ?)",
-            (canonical_id, datetime.now(timezone.utc).isoformat(), source, title),
+            "INSERT OR IGNORE INTO seen("
+            "canonical_id, first_seen, source, title, source_kind) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (canonical_id, datetime.now(timezone.utc).isoformat(), source, title,
+             self.SOURCE_KIND),
         )
         self.conn.commit()
 
