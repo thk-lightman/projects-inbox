@@ -5,13 +5,13 @@
 ```
 [월 09:00 launchd]
    ↓
-[bash run_weekly.sh]
+[bash run_autoFetcher.sh]   (오케스트레이터: 두 fetcher 독립 실행, failure isolation)
    │
-   ├─ paper layer (Docker)
+   ├─ run_paper.sh — paper layer (Docker)
    │     docker compose run --rm app
    │     → fetch_papers.py (vault watchlist → API → paper-W<주>-<title>.md)
    │
-   └─ dev layer (host)
+   └─ run_dev.sh — dev layer (host)
          python3 fetch_dev.py
          → claude -p "/last30days <topic>" per active topic
          → dev-W<주>-<topic>.md + dev-W<주>-briefing.md
@@ -54,7 +54,7 @@ Claude Code 안에서:
 `~/.cache/autoresearch/dedup.sqlite`가 없으면 첫 실행 시 자동 생성. 기존 paper-only 스키마는 2026-06-10에 `source_kind` 컬럼 추가로 마이그레이션 (`ALTER TABLE seen ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'paper'`).
 
 ### 2-4. launchd plist 등록
-plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_weekly.sh`를 호출. dotfiles SSOT 이전은 v2.3 작업 (v2-roadmap 참조).
+plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_autoFetcher.sh`를 호출. dotfiles SSOT 이전은 v2.3 작업 (v2-roadmap 참조).
 
 ### 2-5. watchlist 첫 채움
 세 표 모두 vault에서 직접 행 추가. 각 표 상단의 "표 작성 가이드" 섹션 참고.
@@ -63,21 +63,21 @@ plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArgu
 
 ### 3-1. 자동: launchd 주간 cron
 - 매주 월요일 09:00 발동
-- `bash run_weekly.sh` 호출 → paper(Docker) + dev(host) 순차
+- `bash run_autoFetcher.sh` 호출 → run_paper.sh(Docker) + run_dev.sh(host) 순차
 - 한 layer 실패해도 다른 layer는 진행 (failure isolation)
 
 ### 3-2. 수동: 즉시 fetch (전체)
 ```bash
-bash ~/GIT/project-mori/util-autoresearch/run_weekly.sh
+bash ~/GIT/project-mori/util-autoresearch/run_autoFetcher.sh
 ```
 
 ### 3-3. 수동: 단일 layer
 ```bash
 # paper만
-docker compose run --rm app
+bash ~/GIT/project-mori/util-autoresearch/run_paper.sh
 
 # dev만
-python3 ~/GIT/project-mori/util-autoresearch/fetch_dev.py
+bash ~/GIT/project-mori/util-autoresearch/run_dev.sh
 ```
 
 ### 3-4. Dry-run
