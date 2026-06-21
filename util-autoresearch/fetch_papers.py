@@ -329,6 +329,32 @@ def fetch_openalex_venue_papers(source_id: str, lookback_months: int, citation_m
     return [_paper_from_openalex(w) for w in data.get("results", [])]
 
 
+def fetch_openalex_topic_papers(query: str, strategy: str, lookback_months: int,
+                                 citation_min: int, http_get=_http_get_json) -> list[Paper]:
+    """Fetch by free-text query. strategy selects the sort + date/citation policy:
+    keyword = relevance within the lookback window; classic = most-cited, no date
+    cutoff (foundational); recent = newest first, no citation floor (new papers
+    have few cites yet)."""
+    params: dict = {"search": query, "per-page": 50}
+    filters: list[str] = []
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30 * lookback_months)).date().isoformat()
+    if strategy == "classic":
+        params["sort"] = "cited_by_count:desc"
+        filters.append(f"cited_by_count:>{citation_min - 1}")
+    elif strategy == "recent":
+        params["sort"] = "publication_date:desc"
+        filters.append(f"from_publication_date:{cutoff}")
+    else:  # keyword
+        filters.append(f"from_publication_date:{cutoff}")
+        filters.append(f"cited_by_count:>{citation_min - 1}")
+    params["filter"] = ",".join(filters)
+    email = os.environ.get("OPENALEX_EMAIL")
+    if email:
+        params["mailto"] = email
+    data = http_get(OPENALEX_WORKS_URL, params)
+    return [_paper_from_openalex(w) for w in data.get("results", [])]
+
+
 def _paper_from_openalex(w: dict) -> Paper:
     title = w.get("title") or w.get("display_name") or ""
     authors = [a.get("author", {}).get("display_name", "") for a in w.get("authorships", [])]
@@ -499,12 +525,25 @@ def run_pipeline(*,
                  inbox_dir: Path,
                  dedup: DedupStore,
                  dry_run: bool,
+                 topics: list[TopicRow] | None = None,
                  openalex_author=fetch_openalex_author_papers,
                  openalex_venue=fetch_openalex_venue_papers,
+                 openalex_topic=fetch_openalex_topic_papers,
                  s2_author=fetch_s2_author_papers,
                  s2_venue=fetch_s2_venue_papers) -> dict:
     """Returns counts: {seen_total, new_written, by_source}."""
     counts = {"seen_total": 0, "new_written": 0, "by_source": {"openalex": 0, "s2": 0}}
+
+    for topic in topics or []:
+        try:
+            papers = openalex_topic(topic.effective_query(), topic.strategy,
+                                    DEFAULT_LOOKBACK_MONTHS, topic.effective_citation_min())
+        except Exception as e:  # surface, do not crash whole run
+            print(f"WARN openalex/topic:{topic.slug()}: {e}", file=sys.stderr)
+            continue
+        for paper in papers:
+            _maybe_write(paper, "openalex", inbox_dir, dedup, dry_run, counts)
+        _rate_sleep("openalex")
 
     for lab in labs:
         for fetch_fn, src_label, author_id in (
@@ -568,6 +607,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--watchlist-labs", default=str(DEFAULT_WATCHLIST_LABS))
     ap.add_argument("--watchlist-journals", default=str(DEFAULT_WATCHLIST_JOURNALS))
+    ap.add_argument("--watchlist-topics", default=str(DEFAULT_WATCHLIST_TOPICS))
     ap.add_argument("--inbox-dir", default=str(DEFAULT_INBOX_DIR))
     ap.add_argument("--dedup-db", default=str(DEFAULT_DEDUP_DB))
     ap.add_argument("--dry-run", action="store_true")
@@ -585,11 +625,17 @@ def main() -> int:
     labs = parse_labs_watchlist(labs_path.read_text(encoding="utf-8"))
     journals = parse_journals_watchlist(journals_path.read_text(encoding="utf-8"))
 
+    # Topics watchlist is optional — a missing file just means no topic fetches.
+    topics_path = Path(args.watchlist_topics)
+    topics = (parse_paper_topics_watchlist(topics_path.read_text(encoding="utf-8"))
+              if topics_path.exists() else [])
+
     dedup = DedupStore(Path(args.dedup_db))
     try:
         counts = run_pipeline(
             labs=labs,
             journals=journals,
+            topics=topics,
             inbox_dir=Path(args.inbox_dir),
             dedup=dedup,
             dry_run=args.dry_run,
