@@ -44,6 +44,8 @@ DEFAULT_WATCHLIST_TOPICS = DEFAULT_VAULT / (os.environ.get("AR_PAPER_WATCHLIST_T
     or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-paper-topics.md")
 DEFAULT_INBOX_LIST = DEFAULT_VAULT / (os.environ.get("AR_PAPER_INBOX_LIST_REL")
     or "00 Get Things Done/03Inbox/01Inbox-paper.md")
+DEFAULT_BRIEFINGS_DIR = DEFAULT_VAULT / (os.environ.get("AR_PAPER_BRIEFINGS_REL")
+    or "00 Get Things Done/03Inbox/auto-research/briefings")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 DEFAULT_CITATION_MIN = 20
@@ -536,6 +538,74 @@ def _yaml_escape(s: str) -> str:
     return s
 
 
+def _bucket_slug(bucket: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", bucket.strip().lower()).strip("-")
+    return s or "misc"
+
+
+def render_paper_briefing(*, bucket: str, week_iso: str,
+                          papers: list[Paper], fetched_at: str) -> str:
+    """Deterministic per-bucket briefing for the briefings/ folder. Rich LLM
+    synthesis is the paper-absorb skill's job; this is a templated digest."""
+    head = "\n".join([
+        "---",
+        "source: openalex-paper",
+        "source_kind: paper",
+        "track: paper",
+        f"topic: {_yaml_escape(bucket)}",
+        f"week: {week_iso}",
+        f"fetched_at: {fetched_at}",
+        f"paper_count: {len(papers)}",
+        "status_file: False",
+        "tags:",
+        "  - topic/research/paper-briefing",
+        "---",
+        "",
+        f"# {bucket} ({week_iso})",
+        "",
+        f"{len(papers)} new paper(s) this week.",
+        "",
+    ])
+    blocks: list[str] = []
+    for p in sorted(papers, key=lambda x: x.citation_count, reverse=True):
+        authors = ", ".join(p.authors[:5]) + (" et al." if len(p.authors) > 5 else "")
+        abstract = (p.abstract or "").strip().replace("\n", " ")
+        if len(abstract) > 400:
+            abstract = abstract[:400].rstrip() + "…"
+        link = p.url()
+        blocks.append("\n".join([
+            f"## {p.title}",
+            f"- authors: {authors or '(unknown)'}",
+            f"- venue: {p.venue or '(n/a)'} · citations: {p.citation_count}"
+            f" · {p.published_date or '(n/a)'}",
+            f"- link: {link}" if link else "- link: (none)",
+            "",
+            abstract or "(abstract unavailable)",
+            "",
+        ]))
+    return head + "\n".join(blocks)
+
+
+def write_paper_briefings(written: list[WrittenPaper], *, briefings_dir: Path,
+                          week_iso: str, fetched_at: str, dry_run: bool = False) -> int:
+    """One briefing file per bucket: briefings/paper-<week_iso>-<bucket>.md.
+    Returns the number of briefing files written."""
+    if not written:
+        return 0
+    by_bucket: dict[str, list[Paper]] = {}
+    for w in written:
+        by_bucket.setdefault(w.bucket, []).append(w.paper)
+    if not dry_run:
+        briefings_dir.mkdir(parents=True, exist_ok=True)
+    for bucket, papers in by_bucket.items():
+        target = briefings_dir / f"paper-{week_iso}-{_bucket_slug(bucket)}.md"
+        body = render_paper_briefing(bucket=bucket, week_iso=week_iso,
+                                     papers=papers, fetched_at=fetched_at)
+        if not dry_run:
+            target.write_text(body, encoding="utf-8")
+    return len(by_bucket)
+
+
 def append_links_to_paper_inbox(written: list[WrittenPaper], *,
                                  inbox_file: Path, today_yyyymmdd: str) -> int:
     """Append one line per newly-written paper to 01Inbox-paper.md (paper-absorb
@@ -667,6 +737,7 @@ def main() -> int:
     ap.add_argument("--watchlist-topics", default=str(DEFAULT_WATCHLIST_TOPICS))
     ap.add_argument("--inbox-dir", default=str(DEFAULT_INBOX_DIR))
     ap.add_argument("--inbox-list", default=str(DEFAULT_INBOX_LIST))
+    ap.add_argument("--briefings-dir", default=str(DEFAULT_BRIEFINGS_DIR))
     ap.add_argument("--dedup-db", default=str(DEFAULT_DEDUP_DB))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -701,18 +772,25 @@ def main() -> int:
     finally:
         dedup.close()
 
-    linked = 0
+    linked = briefed = 0
     if not args.dry_run:
+        now = datetime.now()
         linked = append_links_to_paper_inbox(
             counts["written"],
             inbox_file=Path(args.inbox_list),
-            today_yyyymmdd=datetime.now().strftime("%Y%m%d"),
+            today_yyyymmdd=now.strftime("%Y%m%d"),
+        )
+        briefed = write_paper_briefings(
+            counts["written"],
+            briefings_dir=Path(args.briefings_dir),
+            week_iso=now.strftime("%G-W%V"),
+            fetched_at=datetime.now(timezone.utc).isoformat(),
         )
 
     print(f"OK. seen={counts['seen_total']} new={counts['new_written']} "
           f"openalex={counts['by_source'].get('openalex', 0)} "
           f"s2={counts['by_source'].get('s2', 0)} "
-          f"linked={linked} dry_run={args.dry_run}")
+          f"linked={linked} briefed={briefed} dry_run={args.dry_run}")
     return 0
 
 
