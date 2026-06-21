@@ -9,7 +9,9 @@
    │
    ├─ run_paper.sh — paper layer (Docker)
    │     docker compose run --rm app
-   │     → fetch_papers.py (vault watchlist → API → paper-W<주>-<title>.md)
+   │     → fetch_papers.py (PI/venue + topics[classic/recent/keyword] → OpenAlex/S2)
+   │       → raws/paper-W<주>-<title>.md + (zotero push) + 01Inbox-paper.md
+   │       + briefings/paper-W<주>-<bucket>.md
    │
    └─ run_dev.sh — dev layer (host)
          python3 fetch_dev.py
@@ -23,9 +25,12 @@
 |---|---|---|---|
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-labs.md` | **너** | 시작 + 가끔 | 추적할 PI 표 (paper layer 입력) |
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-journals.md` | **너** | 시작 + 가끔 | 추적할 저널·컨퍼런스 표 (paper layer 입력) |
+| `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-paper-topics.md` | **너** | 시작 + 가끔 | 추적할 paper 토픽 표 (주제·전략 classic/recent/keyword) |
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-topics.md` | **너** | 시작 + 가끔 | 추적할 dev 토픽 표 (dev layer 입력) |
 | `vault/00 GTD/03Inbox/auto-research/raws/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper layer 산출물 |
 | `vault/00 GTD/03Inbox/auto-research/raws/dev-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | dev layer 산출물 (토픽별 + briefing) |
+| `vault/00 GTD/03Inbox/01Inbox-paper.md` | 스크립트 append → paper-absorb 입력 | 매주 | fetch된 논문 링크리스트 (zotero key 포함) |
+| `vault/00 GTD/03Inbox/auto-research/briefings/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper bucket별 템플릿 브리핑 |
 | `~/GIT/project-mori/util-autoresearch/` | **너** (git), Claude (코드 변경) | 드물게 | application repo SSOT |
 
 자동 생성·관리 (너 손 X):
