@@ -32,7 +32,15 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 echo "$LOG_PREFIX start"
-docker compose -f "$REPO_ROOT/docker-compose.yml" run --rm app
+# --build so code changes reach the cron run (cached layers ≈ instant when unchanged).
+# --env-file: compose only auto-loads .env from CWD, which is / under launchd, so point
+# it at the repo .env explicitly (ZOTERO_* + AR_* overrides). Absent .env → defaults.
+COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+    docker compose --env-file "$REPO_ROOT/.env" -f "$COMPOSE_FILE" run --build --rm app
+else
+    docker compose -f "$COMPOSE_FILE" run --build --rm app
+fi
 status=$?
 echo "$LOG_PREFIX exit=$status"
 exit $status
