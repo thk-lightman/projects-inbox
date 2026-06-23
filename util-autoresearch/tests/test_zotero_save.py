@@ -77,6 +77,19 @@ def test_build_zotero_item_preprint_when_arxiv_only():
     assert item["archiveID"] == "2403.12345"
 
 
+def test_build_item_date_object_is_json_serializable():
+    # YAML turns unquoted `published_date: 2009-01-01` into a datetime.date;
+    # the built item must still json-encode for the Zotero API (regression).
+    import datetime
+    import json
+    item = build_zotero_item({
+        "title": "P", "authors": ["First Last"], "doi": "10.1/x",
+        "published_date": datetime.date(2009, 1, 1),
+    })
+    assert item["date"] == "2009-01-01"
+    json.dumps(item)  # must not raise
+
+
 def test_extract_abstract_prefers_frontmatter_field():
     assert _extract_abstract_from_body({"abstract": "fm"}, "## Abstract\n\nbody") == "fm"
 

@@ -79,7 +79,9 @@ def build_zotero_item(fm: dict) -> dict:
         "itemType": item_type,
         "title": fm.get("title", ""),
         "creators": creators,
-        "date": fm.get("published_date", ""),
+        # YAML parses an unquoted `published_date: 2009-01-01` as a date object,
+        # which is not JSON-serializable for the Zotero API — coerce to str.
+        "date": str(fm.get("published_date") or ""),
         "abstractNote": _extract_abstract_from_body(fm, ""),
         "tags": [{"tag": t} for t in (fm.get("tags") or []) + ["from-vault"]],
     }
