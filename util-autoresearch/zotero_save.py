@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -212,6 +213,7 @@ def main() -> int:
     ap.add_argument("--vault", default=os.environ.get("VAULT_ROOT", "/vault"))
     ap.add_argument("--doi", help="lookup vault md by DOI")
     ap.add_argument("--arxiv", help="lookup vault md by arxiv id")
+    ap.add_argument("--backfill", help="directory: push every paper-*.md lacking a zotero_key")
     args = ap.parse_args()
 
     api_key = os.environ.get("ZOTERO_API_KEY")
@@ -219,6 +221,29 @@ def main() -> int:
     if not api_key or not user_id:
         print("ERROR: ZOTERO_API_KEY and ZOTERO_USER_ID env required", file=sys.stderr)
         return 2
+    collection = os.environ.get("ZOTERO_COLLECTION") or None
+
+    if args.backfill:
+        base = Path(args.backfill)
+        if not base.is_absolute():
+            base = Path(args.vault) / base
+        mds = sorted(base.glob("paper-*.md"))
+        created = skipped = failed = 0
+        for md in mds:
+            r = push_to_zotero(md, api_key=api_key, user_id=user_id, collection=collection)
+            st = r.get("status")
+            if st == "created":
+                created += 1
+                print(f"  + {md.name} key={r.get('key')} pdf={r.get('pdf_attached')}")
+            elif st == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+                print(f"  ! {md.name}: {r.get('reason')}", file=sys.stderr)
+            time.sleep(0.2)  # be polite to the Zotero API
+        print(f"backfill: created={created} skipped={skipped} failed={failed} "
+              f"of {len(mds)} in {base}")
+        return 0 if failed == 0 else 1
 
     if args.vault_md:
         md_path = Path(args.vault_md)

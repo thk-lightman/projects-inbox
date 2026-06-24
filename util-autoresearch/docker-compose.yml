@@ -37,3 +37,4 @@ services:
       - ZOTERO_API_KEY=${ZOTERO_API_KEY:-}
       - ZOTERO_USER_ID=${ZOTERO_USER_ID:-}
       - ZOTERO_COLLECTION=${ZOTERO_COLLECTION:-}
+      - OPENALEX_EMAIL=${OPENALEX_EMAIL:-}  # Unpaywall contact for OA PDF lookup
