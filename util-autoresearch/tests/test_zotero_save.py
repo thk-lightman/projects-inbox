@@ -8,9 +8,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import zotero_save  # noqa: E402
 from zotero_save import (build_zotero_item, split_frontmatter,  # noqa: E402
-                          write_frontmatter, push_to_zotero,
-                          _extract_abstract_from_body)
+                          write_frontmatter, push_to_zotero, fetch_pdf,
+                          _extract_abstract_from_body, _unpaywall_pdf_url)
 
 
 FM_FIXTURE_PAPER = """\
@@ -88,6 +89,50 @@ def test_build_item_date_object_is_json_serializable():
     })
     assert item["date"] == "2009-01-01"
     json.dumps(item)  # must not raise
+
+
+class _FakeResp:
+    def __init__(self, payload, status=200):
+        self._p = payload
+        self.status = status
+    def read(self):
+        return self._p
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+def test_unpaywall_returns_pdf_url(monkeypatch):
+    import json
+    payload = json.dumps({"best_oa_location": {"url_for_pdf": "http://oa/x.pdf"}}).encode()
+    monkeypatch.setattr(zotero_save.urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(payload))
+    assert _unpaywall_pdf_url("10.1/x", "me@example.com") == "http://oa/x.pdf"
+
+
+def test_unpaywall_none_on_error(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("net down")
+    monkeypatch.setattr(zotero_save.urllib.request, "urlopen", boom)
+    assert _unpaywall_pdf_url("10.1/x", "me@example.com") is None
+
+
+def test_fetch_pdf_no_sources_returns_none():
+    # no arxiv, no pdf_url, no doi+email → no candidates → None (no network)
+    assert fetch_pdf(None, None, None) is None
+
+
+def test_fetch_pdf_prefers_pdf_url(monkeypatch):
+    grabbed = {}
+    def fake_urlopen(req, timeout=60):
+        grabbed["url"] = req.full_url
+        return _FakeResp(b"x" * 2048)
+    monkeypatch.setattr(zotero_save.urllib.request, "urlopen", fake_urlopen)
+    out = fetch_pdf(None, "10.1/x", "http://oa/direct.pdf")
+    assert out is not None and out.exists()
+    assert grabbed["url"] == "http://oa/direct.pdf"  # used pdf_url, skipped unpaywall
+    out.unlink(missing_ok=True)
 
 
 def test_extract_abstract_prefers_frontmatter_field():

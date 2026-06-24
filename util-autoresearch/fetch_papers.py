@@ -128,6 +128,7 @@ class Paper:
     published_date: str = ""
     abstract: str = ""
     citation_count: int = 0
+    pdf_url: str = ""  # OA full-text PDF when known (OpenAlex/S2)
     raw_source: str = ""  # "openalex" or "s2"
 
     def url(self) -> str:
@@ -148,6 +149,11 @@ class Paper:
         hash_src = f"{self.title.strip().lower()}|{first_author.strip().lower()}"
         h = hashlib.sha256(hash_src.encode("utf-8")).hexdigest()[:16]
         return f"hash-{h}"
+
+
+def _strip_html(s: str) -> str:
+    """Drop HTML tags OpenAlex/S2 sometimes embed in titles (e.g. <b>lme4</b>)."""
+    return re.sub(r"<[^>]+>", "", s or "").strip()
 
 
 def _normalize_doi(doi: str) -> str:
@@ -393,8 +399,11 @@ def _paper_from_openalex(w: dict) -> Paper:
             if m:
                 arxiv_id = m.group(1)
                 break
+    pdf_url = ((w.get("best_oa_location") or {}).get("pdf_url")
+               or (w.get("primary_location") or {}).get("pdf_url")
+               or (w.get("open_access") or {}).get("oa_url") or "")
     return Paper(
-        title=title,
+        title=_strip_html(title),
         authors=[a for a in authors if a],
         doi=doi,
         arxiv_id=arxiv_id,
@@ -402,6 +411,7 @@ def _paper_from_openalex(w: dict) -> Paper:
         published_date=published,
         abstract=abstract,
         citation_count=int(w.get("cited_by_count") or 0),
+        pdf_url=pdf_url,
         raw_source="openalex",
     )
 
@@ -421,7 +431,7 @@ def fetch_s2_author_papers(author_id: str, lookback_months: int, citation_min: i
                             http_get=_http_get_json) -> list[Paper]:
     cutoff_year = (datetime.now(timezone.utc) - timedelta(days=30 * lookback_months)).year
     params = {
-        "fields": "title,authors,externalIds,year,publicationDate,venue,abstract,citationCount",
+        "fields": "title,authors,externalIds,year,publicationDate,venue,abstract,citationCount,openAccessPdf",
         "limit": 50,
     }
     url = S2_AUTHOR_PAPERS_URL.format(author_id=author_id)
@@ -444,7 +454,7 @@ def fetch_s2_venue_papers(venue_name: str, lookback_months: int, citation_min: i
         "venue": venue_name,
         "year": f"{cutoff_year}-{now_year}",
         "minCitationCount": citation_min,
-        "fields": "title,authors,externalIds,year,publicationDate,venue,abstract,citationCount",
+        "fields": "title,authors,externalIds,year,publicationDate,venue,abstract,citationCount,openAccessPdf",
         "limit": 50,
     }
     data = http_get(S2_PAPER_SEARCH_URL, params)
@@ -454,7 +464,7 @@ def fetch_s2_venue_papers(venue_name: str, lookback_months: int, citation_min: i
 def _paper_from_s2(p: dict) -> Paper:
     ext = p.get("externalIds") or {}
     return Paper(
-        title=p.get("title") or "",
+        title=_strip_html(p.get("title") or ""),
         authors=[a.get("name", "") for a in (p.get("authors") or [])],
         doi=(ext.get("DOI") or "").lower(),
         arxiv_id=ext.get("ArXiv") or "",
@@ -462,6 +472,7 @@ def _paper_from_s2(p: dict) -> Paper:
         published_date=p.get("publicationDate") or (str(p.get("year")) + "-01-01" if p.get("year") else ""),
         abstract=p.get("abstract") or "",
         citation_count=int(p.get("citationCount") or 0),
+        pdf_url=(p.get("openAccessPdf") or {}).get("url") or "",
         raw_source="s2",
     )
 
@@ -502,7 +513,13 @@ def write_paper_md(paper: Paper, inbox_dir: Path, *, dry_run: bool = False) -> P
     title_slug = re.sub(r"[^a-z0-9]+", "-", paper.title.lower())[:60].strip("-") or canonical
     target = inbox_dir / f"paper-{week_short}-{title_slug}.md"
     if target.exists():
-        return target  # idempotent — leave existing alone
+        existing = target.read_text(encoding="utf-8", errors="ignore")
+        if f"canonical_id: {canonical}\n" not in existing:
+            # Same slug, different paper → disambiguate so neither is silently lost.
+            canon_frag = re.sub(r"[^a-z0-9]+", "-", canonical)[:12].strip("-")
+            target = inbox_dir / f"paper-{week_short}-{title_slug}-{canon_frag}.md"
+    if target.exists():
+        return target  # idempotent — same paper already written
     body = _render_paper_md(paper)
     if not dry_run:
         inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -514,9 +531,11 @@ def _render_paper_md(paper: Paper) -> str:
     authors_yaml = "[" + ", ".join(f'"{a}"' for a in paper.authors) + "]" if paper.authors else "[]"
     arxiv_line = f'arxiv_id: "{paper.arxiv_id}"\n' if paper.arxiv_id else ""
     doi_line = f'doi: "{paper.doi}"\n' if paper.doi else ""
+    pdf_line = f'pdf_url: "{paper.pdf_url}"\n' if paper.pdf_url else ""
     return (
         "---\n"
         "source: arxiv-paper\n"
+        f"canonical_id: {paper.canonical_id()}\n"
         f"title: {_yaml_escape(paper.title)}\n"
         f"authors: {authors_yaml}\n"
         f"published_date: {paper.published_date}\n"
@@ -524,6 +543,7 @@ def _render_paper_md(paper: Paper) -> str:
         f"citation_count: {paper.citation_count}\n"
         f"{arxiv_line}"
         f"{doi_line}"
+        f"{pdf_line}"
         "status_file: False\n"
         "---\n\n"
         "## Abstract\n\n"

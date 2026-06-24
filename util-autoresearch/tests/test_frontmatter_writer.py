@@ -44,10 +44,9 @@ def test_write_paper_md_idempotent_skips_existing():
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         first = write_paper_md(p, td_path)
-        first.write_text("preexisting", encoding="utf-8")
         second = write_paper_md(p, td_path)
-        assert second == first
-        assert second.read_text(encoding="utf-8") == "preexisting"
+        assert second == first  # same paper → same path, not duplicated
+        assert len(list(td_path.glob("paper-*.md"))) == 1
 
 
 def test_write_paper_md_dry_run_no_file():

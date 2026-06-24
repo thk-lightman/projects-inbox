@@ -22,10 +22,12 @@ Behavior:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -106,11 +108,35 @@ def _extract_abstract_from_body(fm: dict, body: str) -> str:
 
 # --------------------------- PDF fetch -------------------------------------
 
-def fetch_pdf(arxiv_id: str | None, doi: str | None) -> Path | None:
-    """Download paper PDF to tempfile. Returns Path or None."""
-    candidates = []
+def _unpaywall_pdf_url(doi: str, email: str) -> str | None:
+    """Ask Unpaywall for a free OA PDF url for a DOI. Returns url or None.
+    Unpaywall requires a contact email; we reuse OPENALEX_EMAIL."""
+    try:
+        url = (f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}"
+               f"?{urllib.parse.urlencode({'email': email})}")
+        req = urllib.request.Request(url, headers={"User-Agent": "project-autoresearch/0.1"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return (data.get("best_oa_location") or {}).get("url_for_pdf")
+    except Exception as e:
+        print(f"WARN unpaywall {doi}: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_pdf(arxiv_id: str | None = None, doi: str | None = None,
+              pdf_url: str | None = None, *, email: str | None = None) -> Path | None:
+    """Download an OA PDF to a tempfile from the first working source:
+    arXiv → explicit pdf_url (captured from OpenAlex/S2) → Unpaywall OA lookup
+    by DOI. Returns Path or None when no free full text is reachable."""
+    candidates: list[str] = []
     if arxiv_id:
         candidates.append(f"https://arxiv.org/pdf/{arxiv_id}")
+    if pdf_url:
+        candidates.append(pdf_url)
+    if doi and email:
+        oa = _unpaywall_pdf_url(doi, email)
+        if oa:
+            candidates.append(oa)
     for url in candidates:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "project-autoresearch/0.1"})
@@ -158,8 +184,9 @@ def push_to_zotero(vault_md_path: Path, *,
                 "raw": resp}
     key = list(successful.values())[0]["key"]
 
-    # PDF attach
-    pdf = pdf_fetcher(fm.get("arxiv_id"), fm.get("doi"))
+    # PDF attach (arxiv → captured pdf_url → Unpaywall OA lookup by DOI)
+    pdf = pdf_fetcher(fm.get("arxiv_id"), fm.get("doi"), fm.get("pdf_url"),
+                      email=os.environ.get("OPENALEX_EMAIL"))
     pdf_attached = False
     if pdf:
         try:
