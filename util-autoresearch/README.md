@@ -59,7 +59,7 @@ Claude Code 안에서:
 `~/.cache/autoresearch/dedup.sqlite`가 없으면 첫 실행 시 자동 생성. 기존 paper-only 스키마는 2026-06-10에 `source_kind` 컬럼 추가로 마이그레이션 (`ALTER TABLE seen ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'paper'`).
 
 ### 2-4. launchd plist 등록
-plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_autoFetcher.sh`를 호출. dotfiles SSOT 이전은 v2.3 작업 (v2-roadmap 참조).
+plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_autoFetcher.sh`를 호출. plist 소스·배포는 dotfiles(`launchd/agents/claude/`)에서 관리.
 
 ### 2-5. watchlist 첫 채움
 네 표(labs/journals/paper-topics/dev topics) vault에서 직접 행 추가. 각 표 상단 "표 작성 가이드" 참고.
@@ -162,9 +162,8 @@ python3 fetch_dev.py \
 ## 7. 관련 문서
 
 - `vault/01 CC/prod-autoresearch/prod-autoresearch.md` — 프로젝트 MOC
-- `vault/01 CC/prod-autoresearch/docs-handoff.md` — 운용 매뉴얼
-- `vault/01 CC/prod-autoresearch/docs-v2-roadmap.md` — 향후 작업 (paper enrichment, concept gap-fill, dotfiles 정합 등)
-- `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-{labs,journals,topics}.md` — 입력 SSOT
+- `vault/01 CC/prod-autoresearch/docs-handoff.md` — 현행 상태·운용 매뉴얼 (아키텍처·다음 작업 포함)
+- `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-{labs,journals,paper-topics,topics}.md` — 입력 SSOT
 
 ## 8. Watchlist 설계 원칙
 
