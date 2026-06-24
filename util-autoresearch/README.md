@@ -62,7 +62,19 @@ Claude Code 안에서:
 plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_autoFetcher.sh`를 호출. dotfiles SSOT 이전은 v2.3 작업 (v2-roadmap 참조).
 
 ### 2-5. watchlist 첫 채움
-세 표 모두 vault에서 직접 행 추가. 각 표 상단의 "표 작성 가이드" 섹션 참고.
+네 표(labs/journals/paper-topics/dev topics) vault에서 직접 행 추가. 각 표 상단 "표 작성 가이드" 참고.
+
+### 2-6. 환경변수 · Zotero (.env)
+모든 vault 경로는 env-driven: `VAULT_ROOT` + per-file `AR_PAPER_*` / `AR_DEV_*` `_REL` (vault 폴더 이동 시 코드 수정 0). 전체 키는 `.env.example` 참고 → `.env`(gitignored)로 복사.
+
+Zotero 자동 저장 켜려면 `.env`에:
+```
+ZOTERO_API_KEY=<zotero.org/settings/keys 발급, library read+write>
+ZOTERO_USER_ID=<같은 페이지 숫자 ID>
+ZOTERO_COLLECTION=<8자 키>   # 선택, 분류용
+OPENALEX_EMAIL=<이메일>       # Unpaywall OA PDF 조회 contact
+```
+`run_paper.sh`가 `--env-file .env`로 컨테이너에 전달 (launchd CWD=/ 대응). 기존 backlog 일괄 저장: `docker compose --env-file .env run --rm zotero --backfill "<raws 상대경로>"`.
 
 ## 3. Entry point (운용 시 실행되는 명령)
 
@@ -121,9 +133,12 @@ python3 fetch_dev.py \
 ## 5. 산출물
 
 ### 5-1. paper layer
-- `vault/00 GTD/03Inbox/auto-research/raws/paper-W<주>-<title-slug>.md`
-- frontmatter: `source: arxiv-paper`, `track: research`, `lab`, `venue`, `doi`, `arxiv_id`, `citation_count`, `status_file: False`
-- 본문: abstract 그대로 (깊은 요약은 v2.1 작업)
+입력: PI/저널 표 + **주제 표**(`docs-watchlist-paper-topics.md`, 전략 classic/recent/keyword).
+- `vault/00 GTD/03Inbox/auto-research/raws/paper-W<주>-<title-slug>.md` — 같은 slug 충돌 시 canonical 접미사로 disambiguate
+  - frontmatter: `source: arxiv-paper`, `canonical_id`, `title`, `authors`, `venue`, `doi`, `arxiv_id`, `citation_count`, `pdf_url`(OA시), `status_file: False`
+- `vault/00 GTD/03Inbox/01Inbox-paper.md` — fetch된 논문 링크리스트 (paper-absorb 입력). 형식: `- YYYYMMDD - [auto-research-paper/<bucket>] <title> <url> (zotero:<KEY>)`
+- `vault/00 GTD/03Inbox/auto-research/briefings/paper-W<주>-<bucket>.md` — bucket(topic/pi/venue)당 1개 템플릿 브리핑 (인용 순)
+- **Zotero item** — 수집 시 자동 push (creds 있을 때). OA PDF는 arXiv → 캡처된 pdf_url → Unpaywall(DOI) 순으로 첨부. creds 없으면 graceful skip
 
 ### 5-2. dev layer
 - `vault/00 GTD/03Inbox/auto-research/briefings/dev-W<주>-<topic-slug>.md` — 토픽당 1개, last30days 종합 (한국어 요약 + 영문 본문)
