@@ -1,4 +1,4 @@
-"""Blog watchlist parser + writer/inbox unit tests."""
+"""Blog watchlist parser + scrap-append + pipeline tests (discovery-only)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fetch_blog import (  # noqa: E402
     BlogPost, BlogRow, WrittenBlog,
-    append_links_to_blog_inbox, parse_blog_watchlist, write_blog_md,
+    append_to_scrap, parse_blog_watchlist, run_pipeline,
 )
 
 
@@ -56,38 +56,51 @@ def test_canonical_id_prefers_guid_then_link():
     assert a.canonical_id().startswith("blog-")
 
 
-def test_write_blog_md_and_idempotency(tmp_path):
-    post = BlogPost(title="My First Post", link="https://x/p1", guid="g1",
-                    author="Jane", published_date="2026-06-20",
-                    summary="Hello <b>world</b>", feed_name="Lil'Log")
-    p1 = write_blog_md(post, tmp_path)
-    assert p1.name == "blog-W" + __import__("datetime").datetime.now().strftime("%V") + "-my-first-post.md"
-    body = p1.read_text()
-    assert "source: blog-rss" in body
-    assert "canonical_id: " + post.canonical_id() in body
-    assert "feed: Lil'Log" in body
-    assert "## Summary" in body
-    # second write of same post is a no-op returning the same path
-    p2 = write_blog_md(post, tmp_path)
-    assert p1 == p2
-
-
-def test_write_blog_md_slug_collision_disambiguates(tmp_path):
-    a = BlogPost(title="Same Title", link="https://x/a", guid="ga")
-    b = BlogPost(title="Same Title", link="https://x/b", guid="gb")
-    pa = write_blog_md(a, tmp_path)
-    pb = write_blog_md(b, tmp_path)
-    assert pa != pb  # different canonical → distinct files, neither lost
-
-
-def test_append_links_dedup_and_format(tmp_path):
-    inbox = tmp_path / "01Inbox-blog.md"
-    w = WrittenBlog(post=BlogPost(title="Post A", link="https://x/a"),
-                    path=tmp_path / "blog-x.md", bucket="lil-log")
-    n = append_links_to_blog_inbox([w], inbox_file=inbox, today_yyyymmdd="20260624")
+def test_append_to_scrap_dedup_and_format(tmp_path):
+    scrap = tmp_path / "01Inbox-scrap.md"
+    w = WrittenBlog(post=BlogPost(title="Post A", link="https://x/a"), bucket="lil-log")
+    n = append_to_scrap([w], scrap_file=scrap, today_yyyymmdd="20260624")
     assert n == 1
-    line = inbox.read_text().strip()
+    line = scrap.read_text().strip()
+    # identical format to the dev layer's scrap lines → absorb-articles consumes both
     assert line == "- 20260624 - [auto-research-blog/lil-log] Post A https://x/a"
     # re-append same post → skipped (url already present)
-    n2 = append_links_to_blog_inbox([w], inbox_file=inbox, today_yyyymmdd="20260625")
+    n2 = append_to_scrap([w], scrap_file=scrap, today_yyyymmdd="20260625")
     assert n2 == 0
+
+
+def test_append_to_scrap_preserves_existing_dev_lines(tmp_path):
+    scrap = tmp_path / "01Inbox-scrap.md"
+    scrap.write_text("- 20260620 - [auto-research-dev/agents] Foo https://x/dev\n",
+                     encoding="utf-8")
+    w = WrittenBlog(post=BlogPost(title="Bar", link="https://x/blog"), bucket="feed")
+    append_to_scrap([w], scrap_file=scrap, today_yyyymmdd="20260624")
+    text = scrap.read_text()
+    assert "auto-research-dev/agents" in text     # dev line untouched
+    assert "auto-research-blog/feed" in text       # blog line appended
+
+
+class _FakeDedup:
+    def __init__(self):
+        self.seen = set()
+
+    def has(self, c):
+        return c in self.seen
+
+    def mark(self, c, s, t):
+        self.seen.add(c)
+
+
+def test_run_pipeline_dedups_and_collects():
+    feeds = [BlogRow(name="Lil'Log", url="x", status="active")]
+    posts = [BlogPost(title="P1", link="u1", guid="g1"),
+             BlogPost(title="P2", link="u2", guid="g2")]
+    d = _FakeDedup()
+    counts = run_pipeline(feeds=feeds, dedup=d, dry_run=False,
+                          feed_client=lambda url, max_posts: posts)
+    assert counts["new_count"] == 2 and len(counts["written"]) == 2
+    assert counts["written"][0].bucket == "lil-log"
+    # rerun → all dedup'd, 0 new
+    counts2 = run_pipeline(feeds=feeds, dedup=d, dry_run=False,
+                           feed_client=lambda url, max_posts: posts)
+    assert counts2["new_count"] == 0

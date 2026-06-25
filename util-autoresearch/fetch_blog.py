@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Autoresearch weekly blog fetch.
+"""Autoresearch weekly blog discovery.
 
-Reads a markdown watchlist of blog RSS/Atom feeds, pulls each feed, and drops
-new posts into vault raws as blog-W<isoweek>-<title-slug>.md (RSS summary only,
-homologous to the paper layer's abstract-only note). One link line per new post
-is appended to 01Inbox-blog.md. Dedup is shared with the paper/dev layers via
-the same sqlite store (source_kind='blog').
+Reads a markdown watchlist of blog RSS/Atom feeds and appends new posts as link
+lines to 01Inbox-scrap.md — the SAME inbox the dev layer feeds. The blog layer
+is pure *discovery* (find URLs); *comprehension* (fetch fulltext + judge) is the
+absorb stage's job (learning-absorb-articles, which lazily fetches each scrap
+URL's fulltext). So blog and dev are isomorphic: both discover → scrap → absorb.
+Dedup is shared with the paper/dev layers via the sqlite store (source_kind=blog).
 
 Usage:
     python3 fetch_blog.py
-        [--watchlist PATH] [--inbox-dir PATH] [--inbox-list PATH]
-        [--dedup-db PATH] [--max-posts N] [--dry-run]
+        [--watchlist PATH] [--scrap-file PATH] [--dedup-db PATH]
+        [--max-posts N] [--dry-run]
 
 Defaults match the dotfiles + vault convention; override per-file via AR_BLOG_*
 env (see .env.example).
@@ -33,10 +34,9 @@ DEFAULT_VAULT = Path(os.environ.get("VAULT_ROOT", str(Path.home() / "Obsidian/Ob
 # Vault-relative paths; override per-file via AR_BLOG_* env (see .env.example).
 DEFAULT_WATCHLIST = DEFAULT_VAULT / (os.environ.get("AR_BLOG_WATCHLIST_REL")
     or "00 Get Things Done/03Inbox/auto-research/docs/docs-watchlist-blog.md")
-DEFAULT_INBOX_DIR = DEFAULT_VAULT / (os.environ.get("AR_BLOG_INBOX_REL")
-    or "00 Get Things Done/03Inbox/auto-research/raws")
-DEFAULT_INBOX_LIST = DEFAULT_VAULT / (os.environ.get("AR_BLOG_INBOX_LIST_REL")
-    or "00 Get Things Done/03Inbox/01Inbox-blog.md")
+# Blog discovery lands in the shared scrap inbox (same as the dev layer).
+DEFAULT_SCRAP = DEFAULT_VAULT / (os.environ.get("AR_BLOG_SCRAP_REL")
+    or "00 Get Things Done/03Inbox/01Inbox-scrap.md")
 DEFAULT_DEDUP_DB = Path.home() / ".cache/autoresearch/dedup.sqlite"
 
 # A fresh feed can carry a long backlog; cap newest-N per feed so a first run
@@ -68,9 +68,6 @@ class BlogPost:
     title: str
     link: str = ""
     guid: str = ""
-    author: str = ""
-    published_date: str = ""
-    summary: str = ""
     feed_name: str = ""
 
     def canonical_id(self) -> str:
@@ -83,7 +80,6 @@ class BlogPost:
 @dataclass
 class WrittenBlog:
     post: BlogPost
-    path: Path
     bucket: str  # feed slug
 
 
@@ -202,76 +198,17 @@ def fetch_feed(url: str, *, max_posts: int = DEFAULT_MAX_POSTS) -> list[BlogPost
             title=_strip_html(e.get("title", "")),
             link=(e.get("link") or "").strip(),
             guid=(e.get("id") or "").strip(),
-            author=_strip_html(e.get("author", "")),
-            published_date=_entry_date(e),
-            summary=_strip_html(e.get("summary", "")),
             feed_name=feed_name,
         ))
     return posts
 
 
-def _entry_date(entry) -> str:
-    """yyyy-mm-dd from feedparser's parsed time struct; '' when absent."""
-    for key in ("published_parsed", "updated_parsed"):
-        t = entry.get(key)
-        if t:
-            return f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d}"
-    return ""
+# --------------------------- Scrap append ----------------------------------
 
-
-# --------------------------- Frontmatter writer ----------------------------
-
-def write_blog_md(post: BlogPost, inbox_dir: Path, *, dry_run: bool = False) -> Path:
-    """Write or dry-run blog-W<isoweek>-<title-slug>.md to inbox_dir. Returns path."""
-    canonical = post.canonical_id()
-    week_short = "W" + datetime.now().strftime("%V")
-    title_slug = re.sub(r"[^a-z0-9]+", "-", post.title.lower())[:60].strip("-") or canonical
-    target = inbox_dir / f"blog-{week_short}-{title_slug}.md"
-    if target.exists():
-        existing = target.read_text(encoding="utf-8", errors="ignore")
-        if f"canonical_id: {canonical}\n" not in existing:
-            # Same slug, different post → disambiguate so neither is lost.
-            canon_frag = re.sub(r"[^a-z0-9]+", "-", canonical)[:12].strip("-")
-            target = inbox_dir / f"blog-{week_short}-{title_slug}-{canon_frag}.md"
-    if target.exists():
-        return target  # idempotent — same post already written
-    body = _render_blog_md(post)
-    if not dry_run:
-        inbox_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-    return target
-
-
-def _render_blog_md(post: BlogPost) -> str:
-    link_line = f'link: "{post.link}"\n' if post.link else ""
-    author_line = f"author: {_yaml_escape(post.author)}\n" if post.author else ""
-    return (
-        "---\n"
-        "source: blog-rss\n"
-        f"canonical_id: {post.canonical_id()}\n"
-        f"title: {_yaml_escape(post.title)}\n"
-        f"feed: {_yaml_escape(post.feed_name)}\n"
-        f"{author_line}"
-        f"published_date: {post.published_date}\n"
-        f"{link_line}"
-        "status_file: False\n"
-        "---\n\n"
-        "## Summary\n\n"
-        f"{post.summary.strip() or '(summary unavailable)'}\n"
-    )
-
-
-def _yaml_escape(s: str) -> str:
-    s = (s or "").replace("\n", " ").strip()
-    if any(c in s for c in ':"'):
-        return '"' + s.replace('"', '\\"') + '"'
-    return s
-
-
-def append_links_to_blog_inbox(written: list[WrittenBlog], *,
-                               inbox_file: Path, today_yyyymmdd: str) -> int:
-    """Append one line per new post to 01Inbox-blog.md, mirroring the paper/dev
-    line format:
+def append_to_scrap(written: list[WrittenBlog], *,
+                    scrap_file: Path, today_yyyymmdd: str) -> int:
+    """Append one discovery line per new post to 01Inbox-scrap.md, mirroring the
+    dev layer's format (absorb-articles consumes this same inbox):
 
         - YYYYMMDD - [auto-research-blog/<feed>] <title> <url>
 
@@ -279,8 +216,8 @@ def append_links_to_blog_inbox(written: list[WrittenBlog], *,
     Returns the number of lines appended."""
     if not written:
         return 0
-    inbox_file.parent.mkdir(parents=True, exist_ok=True)
-    existing = inbox_file.read_text(encoding="utf-8") if inbox_file.is_file() else ""
+    scrap_file.parent.mkdir(parents=True, exist_ok=True)
+    existing = scrap_file.read_text(encoding="utf-8") if scrap_file.is_file() else ""
     new_lines: list[str] = []
     for w in written:
         url = w.post.link
@@ -293,18 +230,17 @@ def append_links_to_blog_inbox(written: list[WrittenBlog], *,
     if not new_lines:
         return 0
     sep = "" if (not existing or existing.endswith("\n")) else "\n"
-    with inbox_file.open("a", encoding="utf-8") as f:
+    with scrap_file.open("a", encoding="utf-8") as f:
         f.write(sep + "\n".join(new_lines) + "\n")
     return len(new_lines)
 
 
 # --------------------------- Pipeline orchestration ------------------------
 
-def run_pipeline(*, feeds: list[BlogRow], inbox_dir: Path, dedup: DedupStore,
-                 dry_run: bool, max_posts: int = DEFAULT_MAX_POSTS,
-                 feed_client=fetch_feed) -> dict:
-    """Returns {seen_total, new_written, written}."""
-    counts = {"seen_total": 0, "new_written": 0}
+def run_pipeline(*, feeds: list[BlogRow], dedup: DedupStore, dry_run: bool,
+                 max_posts: int = DEFAULT_MAX_POSTS, feed_client=fetch_feed) -> dict:
+    """Returns {seen_total, new_count, written}."""
+    counts = {"seen_total": 0, "new_count": 0}
     written: list[WrittenBlog] = []
     counts["written"] = written
 
@@ -321,11 +257,10 @@ def run_pipeline(*, feeds: list[BlogRow], inbox_dir: Path, dedup: DedupStore,
             counts["seen_total"] += 1
             if dedup.has(canonical):
                 continue
-            path = write_blog_md(post, inbox_dir, dry_run=dry_run)
             if not dry_run:
                 dedup.mark(canonical, "blog", post.title)
-            counts["new_written"] += 1
-            written.append(WrittenBlog(post=post, path=path, bucket=feed.slug()))
+            counts["new_count"] += 1
+            written.append(WrittenBlog(post=post, bucket=feed.slug()))
 
     return counts
 
@@ -335,8 +270,7 @@ def run_pipeline(*, feeds: list[BlogRow], inbox_dir: Path, dedup: DedupStore,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--watchlist", default=str(DEFAULT_WATCHLIST))
-    ap.add_argument("--inbox-dir", default=str(DEFAULT_INBOX_DIR))
-    ap.add_argument("--inbox-list", default=str(DEFAULT_INBOX_LIST))
+    ap.add_argument("--scrap-file", default=str(DEFAULT_SCRAP))
     ap.add_argument("--dedup-db", default=str(DEFAULT_DEDUP_DB))
     ap.add_argument("--max-posts", type=int, default=DEFAULT_MAX_POSTS)
     ap.add_argument("--dry-run", action="store_true")
@@ -353,7 +287,6 @@ def main() -> int:
     try:
         counts = run_pipeline(
             feeds=feeds,
-            inbox_dir=Path(args.inbox_dir),
             dedup=dedup,
             dry_run=args.dry_run,
             max_posts=args.max_posts,
@@ -363,14 +296,14 @@ def main() -> int:
 
     linked = 0
     if not args.dry_run:
-        linked = append_links_to_blog_inbox(
+        linked = append_to_scrap(
             counts["written"],
-            inbox_file=Path(args.inbox_list),
+            scrap_file=Path(args.scrap_file),
             today_yyyymmdd=datetime.now().strftime("%Y%m%d"),
         )
 
     print(f"OK. feeds={len(feeds)} seen={counts['seen_total']} "
-          f"new={counts['new_written']} linked={linked} dry_run={args.dry_run}")
+          f"new={counts['new_count']} linked={linked} dry_run={args.dry_run}")
     return 0
 
 

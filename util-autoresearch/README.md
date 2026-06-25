@@ -1,6 +1,6 @@
 # util-autoresearch
 
-매주 자동으로 외부 정보를 vault에 수집하는 세 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어오고, **blog layer**는 watchlist의 RSS/Atom 피드에서 신규 글을 퍼온다. 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
+매주 자동으로 외부 정보를 vault에 수집하는 세 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어오고, **blog layer**는 watchlist RSS/Atom 피드에서 신규 글 URL을 dev와 같은 scrap inbox에 모은다(흡수는 absorb-articles). 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
 
 ```
 [월 09:00 launchd]
@@ -20,8 +20,8 @@
    │
    └─ run_blog.sh — blog layer (Docker)
          docker compose run --rm blog
-         → fetch_blog.py (watchlist RSS/Atom 피드 → 신규 글)
-         → raws/blog-W<주>-<title>.md + 01Inbox-blog.md
+         → fetch_blog.py (watchlist RSS/Atom → 신규 글 URL, discovery only)
+         → 01Inbox-scrap.md (append; absorb-articles가 흡수)
 ```
 
 ## 1. 내가 관리하는 파일 (TLDR)
@@ -35,9 +35,7 @@
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-blog.md` | **너** | 시작 + 가끔 | 추적할 RSS/Atom 피드 표 (blog layer 입력) |
 | `vault/00 GTD/03Inbox/auto-research/raws/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper layer 산출물 |
 | `vault/00 GTD/03Inbox/auto-research/raws/dev-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | dev layer 산출물 (토픽별 + briefing) |
-| `vault/00 GTD/03Inbox/auto-research/raws/blog-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | blog layer 산출물 (글별 RSS summary) |
 | `vault/00 GTD/03Inbox/01Inbox-paper.md` | 스크립트 append → paper-absorb 입력 | 매주 | fetch된 논문 링크리스트 (zotero key 포함) |
-| `vault/00 GTD/03Inbox/01Inbox-blog.md` | 스크립트 append → material-absorb 입력 | 매주 | fetch된 블로그 글 링크리스트 |
 | `vault/00 GTD/03Inbox/auto-research/briefings/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper bucket별 템플릿 브리핑 |
 | `~/GIT/project-mori/util-autoresearch/` | **너** (git), Claude (코드 변경) | 드물게 | application repo SSOT |
 
@@ -161,12 +159,9 @@ python3 fetch_dev.py \
 - `vault/00 GTD/03Inbox/01Inbox-scrap.md` 에 인용 URL append (형식: `- YYYYMMDD - [auto-research-dev/<topic>] <title> <URL>`). 이후 `/material-absorb`가 처리
 - frontmatter: `source: last30days`, `source_kind: article`, `track: dev`, `topic`, `week`, `fetched_at`
 
-### 5-3. blog layer
-입력: RSS/Atom 피드 표(`docs-watchlist-blog.md`). 피드당 newest-N(`--max-posts`, 디폴트 20)만 처리해 첫 실행 backlog 폭주 방지.
-- `vault/00 GTD/03Inbox/auto-research/raws/blog-W<주>-<title-slug>.md` — 같은 slug 충돌 시 canonical 접미사로 disambiguate
-  - frontmatter: `source: blog-rss`, `canonical_id`(`blog-<hash>`), `title`, `feed`, `author`(있을 때), `published_date`, `link`, `status_file: False`
-  - 본문: `## Summary` + RSS 제공 summary (HTML 태그·엔티티 정리). 전문 스크래핑 X — summary-only
-- `vault/00 GTD/03Inbox/01Inbox-blog.md` 에 글 링크 append (형식: `- YYYYMMDD - [auto-research-blog/<feed-slug>] <title> <url>`). 이후 `/material-absorb`가 처리
+### 5-3. blog layer (discovery only)
+입력: RSS/Atom 피드 표(`docs-watchlist-blog.md`). 피드당 newest-N(`--max-posts`, 디폴트 20)만.
+- `vault/00 GTD/03Inbox/01Inbox-scrap.md` 에 글 URL append (형식: `- YYYYMMDD - [auto-research-blog/<feed-slug>] <title> <url>` — **dev 줄과 동일**). 전문 fetch·요약 안 함 — `/material-absorb`(learning-absorb-articles)가 scrap URL의 전문을 lazy fetch(`fetch_fulltext.py` jina)해 흡수. blog=discovery, absorb=comprehension.
 
 ### 5-4. 공용
 - `~/.cache/autoresearch/dedup.sqlite` 누적 row
@@ -177,7 +172,7 @@ python3 fetch_dev.py \
 증상별 처음 볼 곳:
 - paper-*.md 안 생김 → `docker compose run --rm app --dry-run` + `~/.claude/autoresearch/_launchd.err`
 - dev-*.md 안 생김 → `python3 fetch_dev.py --dry-run` + `claude -p "/last30days test"` 단독 호출 시 작동 여부
-- blog-*.md 안 생김 → `docker compose run --rm blog --dry-run` + watchlist `status=active` 행·피드 URL 유효성 확인
+- blog scrap 줄 안 생김 → `docker compose run --rm blog --dry-run` + watchlist `status=active` 행·피드 URL 유효성 확인
 - 같은 논문 중복 → dedup.sqlite의 `source_kind`·`canonical_id` 직접 SELECT
 - 권한 prompt → cron은 plist 통해 호출되므로 `--permission-mode bypassPermissions` 자동 적용 (인터랙티브 실행 시는 직접 승인)
 
@@ -237,11 +232,11 @@ RSS·channel 단위 source-driven 수집은 어떤 토픽이 어디서 터지는
 
 recency·random 픽은 야크 쉐이빙 위험. upvote/like/views/real-money(Polymarket) = 커뮤니티 검증 신호. citation 임계값(paper) ≈ engagement 임계값(dev). 후자는 last30days가 내장.
 
-### 8-8. blog layer — 왜 RSS summary-only + Docker
+### 8-8. blog layer — 왜 discovery-only + Docker
 
-- **왜 feed 단위**: 개인 연구 블로그(Lil'Log, Distill류)는 저자 자체가 큐레이션. PI 큐레이션(paper)과 같은 논리 — "사람·소스 신뢰"가 신호. citation/engagement 임계값 불필요, 신규 글이면 곧 신호.
-- **왜 summary-only**: paper layer가 abstract만 담는 것과 동형. 전문 HTML 스크래핑은 paywall·JS 렌더·readability 휴리스틱으로 fragile. 후속 `/material-absorb`가 필요 시 원문 fetch. raws 노트는 "이 글 읽을지" 판단용 teaser면 충분.
-- **왜 Docker**: RSS 파싱은 host 전용 의존성 없음(paper와 동일, dev처럼 claude CLI 불필요) → sealed 이미지가 자연스러움. `blog` compose 서비스로 격리.
+- **왜 feed 단위**: 개인 연구 블로그(Lil'Log, Distill류)는 저자 자체가 큐레이션. PI 큐레이션(paper)과 같은 논리 — "사람·소스 신뢰"가 신호.
+- **왜 discovery만 (전문 안 가져옴)**: fetch=발견 / absorb=이해 관심사 분리. blog는 글 URL만 scrap에 모으고, `learning-absorb-articles`가 처리할 것만 lazy로 전문 fetch(`fetch_fulltext.py` jina, readability급 전문). dev 줄과 동형 → 단일 흡수 경로 + 전수 전문 저장 회피. (eager 전수 전문 저장은 안 볼 글까지 fetch라 낭비.)
+- **왜 Docker**: RSS 파싱 host 전용 의존성 없음(paper와 동일) → sealed 이미지. `blog` compose 서비스로 격리.
 
 ## 9. 표 작성 가이드
 
