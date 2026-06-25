@@ -535,6 +535,7 @@ def _render_paper_md(paper: Paper) -> str:
     return (
         "---\n"
         "source: arxiv-paper\n"
+        "origin: paper\n"
         f"canonical_id: {paper.canonical_id()}\n"
         f"title: {_yaml_escape(paper.title)}\n"
         f"authors: {authors_yaml}\n"

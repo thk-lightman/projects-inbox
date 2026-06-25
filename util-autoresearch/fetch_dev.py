@@ -329,6 +329,7 @@ def render_briefing_note(
     return "\n".join([
         "---",
         "source: last30days",
+        "origin: dev",
         "source_kind: article",
         "track: dev",
         f"topic: {_yaml_escape(topic.topic)}",
