@@ -1,6 +1,6 @@
 # util-autoresearch
 
-매주 자동으로 외부 정보를 vault에 수집하는 세 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어오고, **blog layer**는 watchlist RSS/Atom 피드에서 신규 글 URL을 dev와 같은 scrap inbox에 모은다(흡수는 absorb-articles). 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
+매주 자동으로 외부 정보를 vault에 수집하는 세 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어오고, **blog layer**는 watchlist RSS/Atom 피드에서 신규 글 URL을 dev와 같은 scrap inbox에 모은다(흡수는 learning-filter-articles). 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
 
 ```
 [월 09:00 launchd]
@@ -21,7 +21,7 @@
    └─ run_blog.sh — blog layer (Docker)
          docker compose run --rm blog
          → fetch_blog.py (watchlist RSS/Atom → 신규 글 URL, discovery only)
-         → 01Inbox-scrap.md (append; absorb-articles가 흡수)
+         → 01Inbox-scrap.md (append; learning-filter-articles가 흡수)
 ```
 
 ## 1. 내가 관리하는 파일 (TLDR)
@@ -161,7 +161,7 @@ python3 fetch_dev.py \
 
 ### 5-3. blog layer (discovery only)
 입력: RSS/Atom 피드 표(`docs-watchlist-blog.md`). 피드당 newest-N(`--max-posts`, 디폴트 20)만.
-- `vault/00 GTD/03Inbox/01Inbox-scrap.md` 에 글 URL append (형식: `- YYYYMMDD - [auto-research-blog/<feed-slug>] <title> <url>` — **dev 줄과 동일**). 전문 fetch·요약 안 함 — `/material-absorb`(learning-absorb-articles)가 scrap URL의 전문을 lazy fetch(`fetch_fulltext.py` jina)해 흡수. blog=discovery, absorb=comprehension.
+- `vault/00 GTD/03Inbox/01Inbox-scrap.md` 에 글 URL append (형식: `- YYYYMMDD - [auto-research-blog/<feed-slug>] <title> <url>` — **dev 줄과 동일**). 전문 fetch·요약 안 함 — `/material-absorb`(learning-filter-articles)가 scrap URL의 전문을 lazy fetch(`fetch_fulltext.py` jina)해 흡수. blog=discovery, absorb=comprehension.
 
 ### 5-4. 공용
 - `~/.cache/autoresearch/dedup.sqlite` 누적 row
@@ -235,7 +235,7 @@ recency·random 픽은 야크 쉐이빙 위험. upvote/like/views/real-money(Pol
 ### 8-8. blog layer — 왜 discovery-only + Docker
 
 - **왜 feed 단위**: 개인 연구 블로그(Lil'Log, Distill류)는 저자 자체가 큐레이션. PI 큐레이션(paper)과 같은 논리 — "사람·소스 신뢰"가 신호.
-- **왜 discovery만 (전문 안 가져옴)**: fetch=발견 / absorb=이해 관심사 분리. blog는 글 URL만 scrap에 모으고, `learning-absorb-articles`가 처리할 것만 lazy로 전문 fetch(`fetch_fulltext.py` jina, readability급 전문). dev 줄과 동형 → 단일 흡수 경로 + 전수 전문 저장 회피. (eager 전수 전문 저장은 안 볼 글까지 fetch라 낭비.)
+- **왜 discovery만 (전문 안 가져옴)**: fetch=발견 / absorb=이해 관심사 분리. blog는 글 URL만 scrap에 모으고, `learning-filter-articles`가 처리할 것만 lazy로 전문 fetch(`fetch_fulltext.py` jina, readability급 전문). dev 줄과 동형 → 단일 흡수 경로 + 전수 전문 저장 회피. (eager 전수 전문 저장은 안 볼 글까지 fetch라 낭비.)
 - **왜 Docker**: RSS 파싱 host 전용 의존성 없음(paper와 동일) → sealed 이미지. `blog` compose 서비스로 격리.
 
 ## 9. 표 작성 가이드
