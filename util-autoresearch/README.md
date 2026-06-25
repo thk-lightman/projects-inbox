@@ -1,11 +1,11 @@
 # util-autoresearch
 
-매주 자동으로 외부 정보를 vault에 수집하는 두 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어온다. 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
+매주 자동으로 외부 정보를 vault에 수집하는 세 계층 파이프라인. **paper layer**는 PI·저널 단위로 OpenAlex + Semantic Scholar로 논문을 fetch, **dev layer**는 토픽 단위로 last30days-skill을 invoke해서 Reddit/HN/X/YouTube/TikTok/Polymarket/GitHub 시그널을 끌어오고, **blog layer**는 watchlist의 RSS/Atom 피드에서 신규 글을 퍼온다. 결과는 모두 같은 vault inbox에 떨어져 `/learn-paper`·material-absorb·Zotero 같은 후속 흐름이 일관 처리.
 
 ```
 [월 09:00 launchd]
    ↓
-[bash run_autoFetcher.sh]   (오케스트레이터: 두 fetcher 독립 실행, failure isolation)
+[bash run_autoFetcher.sh]   (오케스트레이터: 세 fetcher 독립 실행, failure isolation)
    │
    ├─ run_paper.sh — paper layer (Docker)
    │     docker compose run --rm app
@@ -13,10 +13,15 @@
    │       → raws/paper-W<주>-<title>.md + (zotero push) + 01Inbox-paper.md
    │       + briefings/paper-W<주>-<bucket>.md
    │
-   └─ run_dev.sh — dev layer (host)
-         python3 fetch_dev.py
-         → claude -p "/last30days <topic>" per active topic
-         → dev-W<주>-<topic>.md + dev-W<주>-briefing.md
+   ├─ run_dev.sh — dev layer (host)
+   │     python3 fetch_dev.py
+   │     → claude -p "/last30days <topic>" per active topic
+   │     → dev-W<주>-<topic>.md + dev-W<주>-briefing.md
+   │
+   └─ run_blog.sh — blog layer (Docker)
+         docker compose run --rm blog
+         → fetch_blog.py (watchlist RSS/Atom 피드 → 신규 글)
+         → raws/blog-W<주>-<title>.md + 01Inbox-blog.md
 ```
 
 ## 1. 내가 관리하는 파일 (TLDR)
@@ -27,14 +32,17 @@
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-journals.md` | **너** | 시작 + 가끔 | 추적할 저널·컨퍼런스 표 (paper layer 입력) |
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-paper-topics.md` | **너** | 시작 + 가끔 | 추적할 paper 토픽 표 (주제·전략 classic/recent/keyword) |
 | `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-topics.md` | **너** | 시작 + 가끔 | 추적할 dev 토픽 표 (dev layer 입력) |
+| `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-blog.md` | **너** | 시작 + 가끔 | 추적할 RSS/Atom 피드 표 (blog layer 입력) |
 | `vault/00 GTD/03Inbox/auto-research/raws/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper layer 산출물 |
 | `vault/00 GTD/03Inbox/auto-research/raws/dev-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | dev layer 산출물 (토픽별 + briefing) |
+| `vault/00 GTD/03Inbox/auto-research/raws/blog-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | blog layer 산출물 (글별 RSS summary) |
 | `vault/00 GTD/03Inbox/01Inbox-paper.md` | 스크립트 append → paper-absorb 입력 | 매주 | fetch된 논문 링크리스트 (zotero key 포함) |
+| `vault/00 GTD/03Inbox/01Inbox-blog.md` | 스크립트 append → material-absorb 입력 | 매주 | fetch된 블로그 글 링크리스트 |
 | `vault/00 GTD/03Inbox/auto-research/briefings/paper-W*-*.md` | 스크립트 생성 → **너 검토** | 매주 | paper bucket별 템플릿 브리핑 |
 | `~/GIT/project-mori/util-autoresearch/` | **너** (git), Claude (코드 변경) | 드물게 | application repo SSOT |
 
 자동 생성·관리 (너 손 X):
-- `~/.cache/autoresearch/dedup.sqlite` — 양 layer 공용 dedup. 컬럼 `source_kind` (paper|article|video|social) + `canonical_id` prefix 로 종류 분리.
+- `~/.cache/autoresearch/dedup.sqlite` — 세 layer 공용 dedup. 컬럼 `source_kind` (paper|article|video|social|blog) + `canonical_id` prefix 로 종류 분리.
 - `~/.claude/autoresearch/_launchd.{out,err}` — launchd 로그
 - `~/Library/LaunchAgents/com.mori.autoresearch.plist` — wrapper 호출 (v1.0.0 이후 직접 docker 호출 안 함)
 
@@ -62,7 +70,7 @@ Claude Code 안에서:
 plist는 host `~/Library/LaunchAgents/com.mori.autoresearch.plist`. `ProgramArguments`가 `bash run_autoFetcher.sh`를 호출. plist 소스·배포는 dotfiles(`launchd/agents/claude/`)에서 관리.
 
 ### 2-5. watchlist 첫 채움
-네 표(labs/journals/paper-topics/dev topics) vault에서 직접 행 추가. 각 표 상단 "표 작성 가이드" 참고.
+네 표(labs/journals/paper-topics/dev topics/blog) vault에서 직접 행 추가. 각 표 상단 "표 작성 가이드" 참고.
 
 ### 2-6. 환경변수 · Zotero (.env)
 모든 vault 경로는 env-driven: `VAULT_ROOT` + per-file `AR_PAPER_*` / `AR_DEV_*` `_REL` (vault 폴더 이동 시 코드 수정 0). 전체 키는 `.env.example` 참고 → `.env`(gitignored)로 복사.
@@ -80,7 +88,7 @@ OPENALEX_EMAIL=<이메일>       # Unpaywall OA PDF 조회 contact
 
 ### 3-1. 자동: launchd 주간 cron
 - 매주 월요일 09:00 발동
-- `bash run_autoFetcher.sh` 호출 → run_paper.sh(Docker) + run_dev.sh(host) 순차
+- `bash run_autoFetcher.sh` 호출 → run_paper.sh(Docker) + run_dev.sh(host) + run_blog.sh(Docker) 순차
 - 한 layer 실패해도 다른 layer는 진행 (failure isolation)
 
 ### 3-2. 수동: 즉시 fetch (전체)
@@ -95,17 +103,21 @@ bash ~/GIT/project-mori/util-autoresearch/run_paper.sh
 
 # dev만
 bash ~/GIT/project-mori/util-autoresearch/run_dev.sh
+
+# blog만
+bash ~/GIT/project-mori/util-autoresearch/run_blog.sh
 ```
 
 ### 3-4. Dry-run
 ```bash
 docker compose run --rm app --dry-run     # paper
 python3 fetch_dev.py --dry-run             # dev
+docker compose run --rm blog --dry-run    # blog
 ```
 
 ### 3-5. 테스트
 ```bash
-docker compose run --rm test    # 24 pytest
+docker compose run --rm test    # 전체 pytest (blog 포함)
 ```
 
 ### 3-6. 임의 watchlist·inbox로 실험
@@ -127,7 +139,11 @@ python3 fetch_dev.py \
 - Claude Code CLI (`claude -p`) → 설치된 last30days-skill plugin
 - last30days가 내부적으로 호출: Reddit RSS, HN Algolia, YouTube (yt-dlp), GitHub API, Polymarket API, WebSearch
 
-### 4-3. 공용
+### 4-3. blog layer
+- `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-blog.md` — RSS/Atom 피드 표
+- 외부: watchlist에 적힌 각 피드 URL (feedparser로 파싱). API key 불필요.
+
+### 4-4. 공용
 - `~/.cache/autoresearch/dedup.sqlite` — 양 layer canonical_id 누적
 
 ## 5. 산출물
@@ -145,7 +161,14 @@ python3 fetch_dev.py \
 - `vault/00 GTD/03Inbox/01Inbox-scrap.md` 에 인용 URL append (형식: `- YYYYMMDD - [auto-research-dev/<topic>] <title> <URL>`). 이후 `/material-absorb`가 처리
 - frontmatter: `source: last30days`, `source_kind: article`, `track: dev`, `topic`, `week`, `fetched_at`
 
-### 5-3. 공용
+### 5-3. blog layer
+입력: RSS/Atom 피드 표(`docs-watchlist-blog.md`). 피드당 newest-N(`--max-posts`, 디폴트 20)만 처리해 첫 실행 backlog 폭주 방지.
+- `vault/00 GTD/03Inbox/auto-research/raws/blog-W<주>-<title-slug>.md` — 같은 slug 충돌 시 canonical 접미사로 disambiguate
+  - frontmatter: `source: blog-rss`, `canonical_id`(`blog-<hash>`), `title`, `feed`, `author`(있을 때), `published_date`, `link`, `status_file: False`
+  - 본문: `## Summary` + RSS 제공 summary (HTML 태그·엔티티 정리). 전문 스크래핑 X — summary-only
+- `vault/00 GTD/03Inbox/01Inbox-blog.md` 에 글 링크 append (형식: `- YYYYMMDD - [auto-research-blog/<feed-slug>] <title> <url>`). 이후 `/material-absorb`가 처리
+
+### 5-4. 공용
 - `~/.cache/autoresearch/dedup.sqlite` 누적 row
 - `~/.claude/autoresearch/_launchd.{out,err}` 로그
 
@@ -154,6 +177,7 @@ python3 fetch_dev.py \
 증상별 처음 볼 곳:
 - paper-*.md 안 생김 → `docker compose run --rm app --dry-run` + `~/.claude/autoresearch/_launchd.err`
 - dev-*.md 안 생김 → `python3 fetch_dev.py --dry-run` + `claude -p "/last30days test"` 단독 호출 시 작동 여부
+- blog-*.md 안 생김 → `docker compose run --rm blog --dry-run` + watchlist `status=active` 행·피드 URL 유효성 확인
 - 같은 논문 중복 → dedup.sqlite의 `source_kind`·`canonical_id` 직접 SELECT
 - 권한 prompt → cron은 plist 통해 호출되므로 `--permission-mode bypassPermissions` 자동 적용 (인터랙티브 실행 시는 직접 승인)
 
@@ -163,7 +187,7 @@ python3 fetch_dev.py \
 
 - `vault/01 CC/prod-autoresearch/prod-autoresearch.md` — 프로젝트 MOC
 - `vault/01 CC/prod-autoresearch/docs-handoff.md` — 현행 상태·운용 매뉴얼 (아키텍처·다음 작업 포함)
-- `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-{labs,journals,paper-topics,topics}.md` — 입력 SSOT
+- `vault/00 GTD/03Inbox/auto-research/docs/docs-watchlist-{labs,journals,paper-topics,topics,blog}.md` — 입력 SSOT
 
 ## 8. Watchlist 설계 원칙
 
@@ -213,6 +237,12 @@ RSS·channel 단위 source-driven 수집은 어떤 토픽이 어디서 터지는
 
 recency·random 픽은 야크 쉐이빙 위험. upvote/like/views/real-money(Polymarket) = 커뮤니티 검증 신호. citation 임계값(paper) ≈ engagement 임계값(dev). 후자는 last30days가 내장.
 
+### 8-8. blog layer — 왜 RSS summary-only + Docker
+
+- **왜 feed 단위**: 개인 연구 블로그(Lil'Log, Distill류)는 저자 자체가 큐레이션. PI 큐레이션(paper)과 같은 논리 — "사람·소스 신뢰"가 신호. citation/engagement 임계값 불필요, 신규 글이면 곧 신호.
+- **왜 summary-only**: paper layer가 abstract만 담는 것과 동형. 전문 HTML 스크래핑은 paywall·JS 렌더·readability 휴리스틱으로 fragile. 후속 `/material-absorb`가 필요 시 원문 fetch. raws 노트는 "이 글 읽을지" 판단용 teaser면 충분.
+- **왜 Docker**: RSS 파싱은 host 전용 의존성 없음(paper와 동일, dev처럼 claude CLI 불필요) → sealed 이미지가 자연스러움. `blog` compose 서비스로 격리.
+
 ## 9. 표 작성 가이드
 
 ### 9-1. OpenAlex authorId
@@ -258,7 +288,13 @@ S2는 venue를 표준 string으로 받음. 공식 venue 이름을 그대로 적�
 - 명사구 (예: `Claude Code skills`, `MCP servers`). 의문문 X.
 - 고유명사 1개 (예: `Ouroboros`)도 OK — last30days 엔진이 자동 확장.
 
-### 9-8. 추가·삭제 절차 (3 표 공통)
+### 9-8. blog 피드 URL 찾는 법
+
+- 블로그 하단·`<head>`의 RSS/Atom 링크 (`feed`, `rss`, `atom`, `index.xml`, `/atom.xml`). 예: `https://lilianweng.github.io/index.xml`.
+- 없어 보이면 `<루트>/feed`, `/rss`, `/index.xml` 시도. Substack=`<sub>.substack.com/feed`, Medium=`medium.com/feed/@<user>`.
+- `status` 컬럼 `active`만 fetch. 잠시 끄려면 `paused`.
+
+### 9-9. 추가·삭제 절차 (4 표 공통)
 
 1. 새 행 추가 → 저장 → 다음 cron 자동 반영
 2. 첫 주 결과 보고 임계값 조정

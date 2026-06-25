@@ -6,8 +6,9 @@
 #
 #   run_paper.sh  — paper layer (Docker): OpenAlex + Semantic Scholar
 #   run_dev.sh    — dev layer (host):     last30days topic synthesis
+#   run_blog.sh   — blog layer (Docker):  RSS/Atom feeds
 #
-# Both share ~/.cache/autoresearch/dedup.sqlite. Stdout/stderr are captured by
+# All share ~/.cache/autoresearch/dedup.sqlite. Stdout/stderr are captured by
 # launchd into ~/.claude/autoresearch/_launchd.{out,err}.
 
 set -uo pipefail  # NOT -e: a failing layer must not abort the other.
@@ -21,10 +22,13 @@ paper_status=$?
 bash "$REPO_ROOT/run_dev.sh"
 dev_status=$?
 
-echo "$LOG_PREFIX paper=$paper_status dev=$dev_status"
+bash "$REPO_ROOT/run_blog.sh"
+blog_status=$?
 
-# Fail the cron run only on a total outage (both layers failed); otherwise succeed.
-if [[ "$paper_status" -ne 0 && "$dev_status" -ne 0 ]]; then
+echo "$LOG_PREFIX paper=$paper_status dev=$dev_status blog=$blog_status"
+
+# Fail the cron run only on a total outage (all layers failed); otherwise succeed.
+if [[ "$paper_status" -ne 0 && "$dev_status" -ne 0 && "$blog_status" -ne 0 ]]; then
     exit 1
 fi
 exit 0

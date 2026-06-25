@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY fetch_papers.py .
+COPY fetch_blog.py .
 COPY zotero_save.py .
 COPY tests ./tests
 

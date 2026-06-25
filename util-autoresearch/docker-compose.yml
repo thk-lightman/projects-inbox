@@ -20,6 +20,23 @@ services:
       - --dedup-db
       - /cache/dedup.sqlite
 
+  blog:
+    build: .
+    image: util-autoresearch:latest
+    entrypoint: ["python3", "fetch_blog.py"]
+    volumes:
+      - "${VAULT_ROOT:-/Users/mori/Obsidian/Obsidian_Master_v2}:/vault"
+      - "${HOME}/.cache/autoresearch:/cache"
+    environment:
+      - VAULT_ROOT=/vault
+      # Vault-relative path overrides; unset → script defaults (see .env.example).
+      - AR_BLOG_WATCHLIST_REL=${AR_BLOG_WATCHLIST_REL:-}
+      - AR_BLOG_INBOX_REL=${AR_BLOG_INBOX_REL:-}
+      - AR_BLOG_INBOX_LIST_REL=${AR_BLOG_INBOX_LIST_REL:-}
+    command:
+      - --dedup-db
+      - /cache/dedup.sqlite
+
   test:
     build: .
     image: util-autoresearch:latest
